@@ -1,0 +1,31 @@
+# Binaries
+/devcycle
+/devcycle.exe
+/bin/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Go
+/vendor/
+coverage.out
+*.test
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Local scratch
+/tmp/
+/worktrees/
