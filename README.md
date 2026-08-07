@@ -1,39 +1,46 @@
 # ai-dev-cycle-manager
 
-Go backend library + CLI for a local **AI-assisted development cycle** manager.
+**内部代号：** DevCycle  
+**一句话定位：** 把「需求 → 验收 → 任务 → Git 改动」留在本地可追踪，方便人和 AI 协作开发。
 
-> **UI note:** A **Wails + React** desktop frontend is planned and will be built separately.  
-> This repository currently ships the **Go library**, **SQLite store**, **git CLI wrappers**, and a **`devcycle` CLI** for demos and e2e checks. APIs on `internal/app.App` are shaped for later Wails method binding.
+**专业名称：** AI Development Cycle Manager（后端）  
+**通俗解释：** 不管具体用哪个 AI 编程工具，先把要做什么、怎么算做完、改动落在哪条分支/哪个目录管清楚。
 
-**License:** [Apache-2.0](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-## Terminology
+属于 [AI DevOps Open Suite](https://github.com/GeneJie199/project-docs)。**本仓库当前是 Go 后端 + CLI**；Wails + React 桌面界面由前端单独推进，可绑定 `internal/app.App`。
 
-| English   | Meaning (docs)   | Role                                      |
-|-----------|------------------|-------------------------------------------|
-| Branch    | 独立工作版本     | Named git branch for a task               |
-| Worktree  | 隔离开发目录     | Separate checkout directory via `git worktree` |
+---
 
-## Features (DEV-001 … DEV-005)
+## 为什么需要它
 
-- **DEV-001** — Go module scaffold: `cmd/devcycle`, `internal/*`, SQLite via [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite) (pure Go, Windows-friendly)
-- **DEV-002** — Import / validate a local git repository (system `git` CLI)
-- **DEV-003** — Read `status`, branches, commit log
-- **DEV-004** — Worktree create / list / remove
-- **DEV-005** — SQLite models + CRUD for `Requirement`, `AcceptanceCriterion`, `Task` (tasks link to branch + worktree path)
+- AI 改代码很快，但需求、验收和 Diff 常常散落在聊天里；  
+- 非专业同学面对 Branch / Commit / Worktree 容易劝退；  
+- 团队需要「做完了」对应得上证据，而不是只看到模型说完成了。
 
-Also included:
+本工具**不替代** Cursor / Codex / Claude Code，也不内置编辑器；它管理过程与结果的关联。
 
-- **Codex CLI adapter interface only** (`internal/agent/codex.go`) — `Start` / `Stop` / `Status`; no fake “completed” runner
-- **Git diff reader** — `git diff` / `git diff --stat`
-- **E2E demo** — `devcycle demo` or `go run ./examples/demo`
+---
 
-## Requirements
+## 当前能做什么
 
-- Go 1.22+ (developed with Go 1.26)
-- System `git` on `PATH`
+| 能力 | 通俗说明 |
+|------|----------|
+| 导入本地 Git 仓库 | 确认路径是有效仓库 |
+| 读状态 / 分支 / 提交 | 看现在改到哪了 |
+| 需求与验收标准 | 记下要做什么、怎样算通过 |
+| 任务 | 把需求拆成可执行条目 |
+| 分支与 Worktree | 为任务创建「独立工作版本」和「隔离开发目录」 |
+| Diff | 查看改动摘要 |
+| Codex 适配器 | **仅接口定义**，尚未内置真实拉起多 Agent |
 
-## Quick start
+**不做（本阶段）：** 完整看板、云账号、自动合并/发布、多人权限、多 AI Provider 实现。
+
+---
+
+## 快速开始
+
+需要：Go 1.22+、系统 `git`。
 
 ```bash
 git clone https://github.com/GeneJie199/ai-dev-cycle-manager.git
@@ -42,81 +49,44 @@ go test ./...
 go run ./cmd/devcycle demo
 ```
 
-Or build the CLI:
+指定已有仓库：
 
 ```bash
-go build -o devcycle.exe ./cmd/devcycle   # Windows
-./devcycle demo
-./devcycle demo --repo C:\path\to\existing\repo
+go run ./cmd/devcycle demo --repo /path/to/your/repo
 ```
 
-## CLI usage
+常用命令见下方；默认数据库文件 `./devcycle.db`（可用 `--db` 或环境变量 `DEVCYCLE_DB`）。
 
 ```text
-devcycle demo [--repo PATH] [--db PATH]
-devcycle import --repo PATH [--db PATH]
-devcycle status --repo PATH
-devcycle branches --repo PATH [--remote]
-devcycle log --repo PATH [-n N]
-devcycle diff --repo PATH [--stat] [--staged]
-devcycle worktree list --repo PATH
-devcycle worktree add --repo PATH --path WT --branch NAME --create-branch
-devcycle worktree remove --repo PATH --path WT [--force]
-devcycle requirement create --title T [--desc D] [--db PATH]
-devcycle requirement list [--db PATH]
-devcycle task create --req ID --title T [--db PATH]
-devcycle task link --repo PATH --task ID --branch B --path WT [--db PATH]
-devcycle task list [--db PATH]
+devcycle import|status|branches|log|diff --repo PATH
+devcycle worktree list|add|remove ...
+devcycle requirement create|list ...
+devcycle task create|link|list ...
 ```
 
-Default SQLite file: `./devcycle.db` (override with `--db` or `DEVCYCLE_DB`).
+---
 
-### Demo flow
+## 关键术语
 
-`devcycle demo` will:
+| 专业名称 | 通俗解释 |
+|----------|----------|
+| Branch | 独立工作版本 |
+| Worktree | 隔离开发目录 |
+| Requirement | 需求：要解决的问题 |
+| AcceptanceCriterion | 验收标准：怎样算做完 |
+| Task | 任务：可分配、可挂分支的工作项 |
+| Evidence（协议概念） | 证据：测试结果、确认记录等（跨工具协议已定义） |
 
-1. Init a temp git repo **or** use `--repo`
-2. Import / validate the repo
-3. Create a requirement, acceptance criterion, and task
-4. Create a branch (独立工作版本) + worktree (隔离开发目录) and link them on the task
-5. Print status / log / worktree summary
+---
 
-## Layout
+## 给前端（Wails）的绑定入口
 
-```text
-cmd/devcycle/          CLI entrypoint
-examples/demo/         `go run` wrapper for the demo
-internal/app/          High-level façade (Wails-bindable methods)
-internal/git/          git CLI wrappers (repo, status, worktree, diff)
-internal/store/        SQLite persistence
-internal/models/       Domain types
-internal/agent/        CodexAdapter interface only
-pkg/devcycle/          Shared type aliases for hosts
-```
+优先绑定 `internal/app.App` 上的方法，例如：`ImportRepository`、`GitStatus`、`AddWorktree`、`CreateRequirement`、`CreateTask`、`LinkTaskToWorktree` 等。详见源码。
 
-## Wails binding (for the frontend agent)
+---
 
-Bind methods on `internal/app.App` from the future Wails `main` package (same module). Useful exports:
+## 贡献与许可
 
-| Method | Purpose |
-|--------|---------|
-| `ImportRepository` | Register local git path |
-| `GitStatus` / `GitBranches` / `GitLog` / `GitDiff` | Repo introspection |
-| `ListWorktrees` / `AddWorktree` / `RemoveWorktree` | Worktree ops |
-| `CreateRequirement` / `CreateCriterion` / `CreateTask` | Domain CRUD |
-| `LinkTaskToWorktree` | Branch + worktree + task link |
-| `SetCodexAdapter` | Inject a real Codex CLI implementation later |
-
-**Not in this repo (by design):** built-in editor, full kanban UI, cloud accounts, auto-merge/release, multi-user ACL, multiple AI providers, React/Wails UI.
-
-## Tests
-
-```bash
-go test ./...
-```
-
-Git tests create a **real temporary repository** and invoke the system `git` binary.
-
-## License
-
-Copyright 2026 GeneJie199. Licensed under the Apache License, Version 2.0.
+- Bug：请提供 OS、`git --version`、复现命令  
+- Apache-2.0 — [LICENSE](LICENSE)  
+- 套件总览：[project-docs](https://github.com/GeneJie199/project-docs)
