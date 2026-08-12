@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 - 2026-08-13
+
+- Add an actionable first-run workbench that opens and focuses the first requirement form instead of leaving a passive empty canvas.
+- Add consistent visual product marks to the suite switcher without introducing external assets or runtime dependencies.
+- Preserve expanded run/evidence details and manual log scroll position during live polling, and separate current per-criterion evidence from historical failures in readiness.
+
 ## 0.3.1 - 2026-08-12
 
 - Align the suite patch release with the FleetScope transient CPU health-classification fix validated by the cross-module published-artifact gate.

@@ -129,6 +129,8 @@ function renderReqList() {
 function showReqEmpty() {
   $("#req-empty").classList.remove("hidden");
   $("#req-content").classList.add("hidden");
+  const first = state.requirements.length === 0;
+  $("#start-first-requirement").textContent = first ? "新建第一个需求" : "选择一个需求";
   stopPoll();
 }
 
@@ -232,9 +234,16 @@ function progressCell(value, total, label) {
 }
 
 function renderReadiness(readiness, evidence) {
-  const passed = evidence.filter((item) => item.status === "passed").length;
-  const failed = evidence.filter((item) => item.status === "failed").length;
-  $("#readiness-band").innerHTML = `<div class="summary-band readiness-summary"><div><b class="${readiness.ready ? "text-ok" : "text-warn"}">${readiness.ready ? "可发布" : "未就绪"}</b><span>发布就绪</span></div>${progressCell(readiness.criteriaSatisfied, readiness.criteriaTotal, "验收通过")}${progressCell(readiness.criteriaWithEvidence, readiness.criteriaTotal, "证据覆盖")}${progressCell(readiness.tasksDone, readiness.tasksTotal, "任务完成")}${progressCell(readiness.sourcesClean || 0, readiness.sourcesTotal || 0, "代码源干净")}<div><b>${passed} 通过 / ${failed} 未过</b><span>证据共 ${evidence.length} 条</span></div></div>`;
+  const latestByCriterion = new Map();
+  evidence.forEach((item) => {
+    if (!item.criterionId) return;
+    const existing = latestByCriterion.get(item.criterionId);
+    if (!existing || new Date(item.createdAt || 0) > new Date(existing.createdAt || 0)) latestByCriterion.set(item.criterionId, item);
+  });
+  const current = [...latestByCriterion.values()];
+  const passed = current.filter((item) => item.status === "passed").length;
+  const failed = current.filter((item) => item.status === "failed").length;
+  $("#readiness-band").innerHTML = `<div class="summary-band readiness-summary"><div><b class="${readiness.ready ? "text-ok" : "text-warn"}">${readiness.ready ? "可发布" : "未就绪"}</b><span>发布就绪</span></div>${progressCell(readiness.criteriaSatisfied, readiness.criteriaTotal, "验收通过")}${progressCell(readiness.criteriaWithEvidence, readiness.criteriaTotal, "证据覆盖")}${progressCell(readiness.tasksDone, readiness.tasksTotal, "任务完成")}${progressCell(readiness.sourcesClean || 0, readiness.sourcesTotal || 0, "代码源干净")}<div><b>${passed} 当前通过 / ${failed} 当前未过</b><span>${current.length} 项标准有最新证据 · 历史 ${evidence.length} 条</span></div></div>`;
 }
 
 function fillCriterionSelect(select, criteria) {
@@ -299,6 +308,11 @@ async function pollLiveWork() {
       api(`/api/requirements/${state.reqId}/runs`),
       api(`/api/requirements/${state.reqId}/evidence`),
     ]);
+    const logView = new Map();
+    document.querySelectorAll("[data-log-target]").forEach((pre) => logView.set(pre.dataset.logTarget, {
+      scrollTop: pre.scrollTop,
+      follow: pre.scrollHeight - pre.scrollTop - pre.clientHeight < 12,
+    }));
     document.querySelectorAll("[data-sessions-for]").forEach((box) => {
       const taskId = box.dataset.sessionsFor;
       box.innerHTML = renderSessions(sessions.filter((session) => session.taskId === taskId));
@@ -311,7 +325,8 @@ async function pollLiveWork() {
       try {
         const data = await api(`/api/agent-sessions/${id}/log`);
         pre.textContent = data.log || "（暂无输出）";
-        pre.scrollTop = pre.scrollHeight;
+        const view = logView.get(id);
+        pre.scrollTop = !view || view.follow ? pre.scrollHeight : view.scrollTop;
       } catch (_) { /* 保留旧内容，下次再试 */ }
     }
     schedulePoll(sessions || [], runs || []);
@@ -320,20 +335,45 @@ async function pollLiveWork() {
 
 // --- 验证运行与证据 ---
 
+function captureDisclosureState(container) {
+  const result = new Map();
+  container?.querySelectorAll("details[data-disclosure]").forEach((details) => {
+    const output = details.querySelector("pre");
+    result.set(details.dataset.disclosure, { open: details.open, scrollTop: output?.scrollTop || 0 });
+  });
+  return result;
+}
+
+function restoreDisclosureState(container, disclosureState) {
+  container?.querySelectorAll("details[data-disclosure]").forEach((details) => {
+    const saved = disclosureState.get(details.dataset.disclosure);
+    if (!saved) return;
+    details.open = saved.open;
+    const output = details.querySelector("pre");
+    if (output) output.scrollTop = saved.scrollTop;
+  });
+}
+
 function renderRuns(runs, criteria) {
+  const target = $("#run-list");
+  const disclosureState = captureDisclosureState(target);
   const criterionNames = Object.fromEntries(criteria.map((item) => [item.id, item.description]));
   const labels = { running: "运行中", stopping: "正在停止", passed: "通过", failed: "未通过", timed_out: "超时", stopped: "已停止", interrupted: "已中断" };
-  $("#run-list").innerHTML = runs.length ? runs.map((run) => {
+  target.innerHTML = runs.length ? runs.map((run) => {
     const active = ["running", "stopping"].includes(run.status);
     const timing = active ? `已运行 ${fmtDuration(run.durationMilliseconds)}` : `${fmtDuration(run.durationMilliseconds)} · ${fmtTime(run.completedAt)}`;
     const result = active ? timing : `退出码 ${run.exitCode} · ${timing}`;
-    return `<article class="item run-item ${active ? "is-running" : ""}"><div class="item-head"><div><div class="title">${esc(run.name)} <span class="badge ${esc(run.status)}">${esc(labels[run.status] || run.status)}</span></div><div class="meta"><code>${esc(run.command)}</code> · ${result}</div></div>${active ? `<button class="small danger" type="button" data-stop-run="${esc(run.id)}" ${run.status === "stopping" ? "disabled" : ""}>${run.status === "stopping" ? "停止中" : "停止"}</button>` : ""}</div>${run.criterionId ? `<div class="desc">关联：${esc(criterionNames[run.criterionId] || run.criterionId)}</div>` : ""}<details ${active ? "open" : ""}><summary>${active ? "实时输出" : "查看输出"}</summary><pre class="code run-output">${esc(run.output || (active ? "（等待命令输出）" : "（无输出）"))}</pre></details></article>`;
+    return `<article class="item run-item ${active ? "is-running" : ""}"><div class="item-head"><div><div class="title">${esc(run.name)} <span class="badge ${esc(run.status)}">${esc(labels[run.status] || run.status)}</span></div><div class="meta"><code>${esc(run.command)}</code> · ${result}</div></div>${active ? `<button class="small danger" type="button" data-stop-run="${esc(run.id)}" ${run.status === "stopping" ? "disabled" : ""}>${run.status === "stopping" ? "停止中" : "停止"}</button>` : ""}</div>${run.criterionId ? `<div class="desc">关联：${esc(criterionNames[run.criterionId] || run.criterionId)}</div>` : ""}<details data-disclosure="run:${esc(run.id)}" ${active ? "open" : ""}><summary>${active ? "实时输出" : "查看输出"}</summary><pre class="code run-output">${esc(run.output || (active ? "（等待命令输出）" : "（无输出）"))}</pre></details></article>`;
   }).join("") : empty("尚未运行验证命令。");
+  restoreDisclosureState(target, disclosureState);
 }
 
 function renderEvidence(evidence, criteria) {
+  const target = $("#evidence-list");
+  const disclosureState = captureDisclosureState(target);
   const criterionNames = Object.fromEntries(criteria.map((item) => [item.id, item.description]));
-  $("#evidence-list").innerHTML = evidence.length ? evidence.map((item) => `<article class="item"><div class="item-head"><div><div class="title">${esc(item.title)} <span class="badge ${esc(item.status)}">${esc(evidenceStatus[item.status] || item.status)}</span></div><div class="meta">${esc(item.kind)} · ${fmtTime(item.createdAt)}${item.criterionId ? ` · ${esc(criterionNames[item.criterionId] || item.criterionId)}` : ""}</div></div></div>${item.inline ? `<details><summary>查看内容</summary><pre class="code evidence-output">${esc(item.inline)}</pre></details>` : ""}${safeEvidenceLink(item.uri)}</article>`).join("") : empty("尚未登记证据。");
+  target.innerHTML = evidence.length ? evidence.map((item) => `<article class="item"><div class="item-head"><div><div class="title">${esc(item.title)} <span class="badge ${esc(item.status)}">${esc(evidenceStatus[item.status] || item.status)}</span></div><div class="meta">${esc(item.kind)} · ${fmtTime(item.createdAt)}${item.criterionId ? ` · ${esc(criterionNames[item.criterionId] || item.criterionId)}` : ""}</div></div></div>${item.inline ? `<details data-disclosure="evidence:${esc(item.id || `${item.createdAt}:${item.title}`)}"><summary>查看内容</summary><pre class="code evidence-output">${esc(item.inline)}</pre></details>` : ""}${safeEvidenceLink(item.uri)}</article>`).join("") : empty("尚未登记证据。");
+  restoreDisclosureState(target, disclosureState);
 }
 
 function safeEvidenceLink(uri) {
@@ -699,6 +739,16 @@ document.addEventListener("click", async (event) => {
 document.addEventListener("change", async (event) => {
   if (!event.target.matches("[data-task-status]")) return;
   try { await api(`/api/tasks/${event.target.dataset.taskStatus}`, { method: "PATCH", body: { status: event.target.value } }); toast("任务状态已更新"); await loadReqDetail(); } catch (error) { toast(error.message, true); await loadReqDetail(); }
+});
+
+$("#start-first-requirement").addEventListener("click", () => {
+  if (state.requirements.length) {
+    $("#req-list .req-item")?.focus();
+    return;
+  }
+  const composer = $("#form-create-req").closest("details");
+  composer.open = true;
+  $("#req-title").focus();
 });
 
 document.addEventListener("submit", async (event) => {

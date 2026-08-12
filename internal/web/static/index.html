@@ -43,7 +43,11 @@
       </aside>
 
       <div class="req-detail">
-        <div id="req-empty" class="empty">从左侧选择一个需求，或先创建一个新需求。</div>
+        <div id="req-empty" class="empty-start">
+          <span class="empty-start-mark" aria-hidden="true">+</span>
+          <div><strong>从一个可验收目标开始</strong><p>先写清楚目标，再把验收、任务、验证证据和发布候选收进同一条交付链路。</p></div>
+          <button id="start-first-requirement" class="btn" type="button">新建第一个需求</button>
+        </div>
 
         <div id="req-content" class="hidden">
           <div id="req-header"></div>
