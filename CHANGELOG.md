@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1 - 2026-08-12
+
+- Align the suite patch release with the FleetScope transient CPU health-classification fix validated by the cross-module published-artifact gate.
+
 ## 0.3.0 - 2026-08-12
 
 - Run verification commands as persisted background jobs with live bounded output, elapsed time, cancellation, terminal evidence, and restart recovery.
