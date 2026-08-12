@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
 )
@@ -16,6 +17,35 @@ func openTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+func TestMigrationVersionAndInsertPlanRollback(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	var version int
+	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil || version != SchemaVersion {
+		t.Fatalf("schema version=%d err=%v", version, err)
+	}
+	requirement, err := s.CreateRequirement(ctx, "migration", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	err = s.InsertPlan(ctx,
+		[]models.AcceptanceCriterion{{ID: "criterion-rollback", RequirementID: requirement.ID, Description: "must roll back", CreatedAt: now}},
+		[]models.Task{{ID: "task-rollback", RequirementID: requirement.ID, Title: "invalid dependency", Status: models.TaskStatusTodo, DependsOn: []string{"missing-task"}, CreatedAt: now, UpdatedAt: now}},
+	)
+	if err == nil {
+		t.Fatal("expected foreign-key failure")
+	}
+	criteria, listErr := s.ListCriteriaByRequirement(ctx, requirement.ID)
+	if listErr != nil || len(criteria) != 0 {
+		t.Fatalf("criteria after rollback=%v err=%v", criteria, listErr)
+	}
+	tasks, listErr := s.ListTasksByRequirement(ctx, requirement.ID)
+	if listErr != nil || len(tasks) != 0 {
+		t.Fatalf("tasks after rollback=%v err=%v", tasks, listErr)
+	}
 }
 
 func TestRequirementCriteriaTaskCRUD(t *testing.T) {
@@ -126,5 +156,58 @@ func TestRepositoryAndCascade(t *testing.T) {
 	repos, err := s.ListRepositories(ctx)
 	if err != nil || len(repos) != 1 {
 		t.Fatalf("repos: %v %d", err, len(repos))
+	}
+}
+
+func TestDeletingCriterionAndTaskUnlinksHistoricalEvidence(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	req, err := s.CreateRequirement(ctx, "Preserve audit evidence", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	criterion, err := s.CreateCriterion(ctx, req.ID, "verification passes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := s.CreateTask(ctx, req.ID, "Implement", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := s.CreateEvidence(ctx, models.Evidence{RequirementID: req.ID, CriterionID: criterion.ID, TaskID: task.ID, Kind: "test", Title: "go test", Status: "passed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := s.CreateVerificationRun(ctx, models.VerificationRun{RequirementID: req.ID, CriterionID: criterion.ID, Name: "go test", Command: "go test ./...", Status: "passed", StartedAt: now, CompletedAt: now, EvidenceID: evidence.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.CreateAgentSession(ctx, models.AgentSession{TaskID: task.ID, Provider: "kimi", Prompt: "review", WorkingDir: t.TempDir(), Status: "completed"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteCriterion(ctx, criterion.ID); err != nil {
+		t.Fatal(err)
+	}
+	evidenceList, err := s.ListEvidence(ctx, req.ID)
+	if err != nil || len(evidenceList) != 1 || evidenceList[0].CriterionID != "" || evidenceList[0].TaskID != task.ID {
+		t.Fatalf("evidence after criterion deletion: %+v err=%v", evidenceList, err)
+	}
+	runs, err := s.ListVerificationRuns(ctx, req.ID)
+	if err != nil || len(runs) != 1 || runs[0].CriterionID != "" {
+		t.Fatalf("runs after criterion deletion: %+v err=%v", runs, err)
+	}
+
+	if err := s.DeleteTask(ctx, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	evidenceList, err = s.ListEvidence(ctx, req.ID)
+	if err != nil || len(evidenceList) != 1 || evidenceList[0].TaskID != "" {
+		t.Fatalf("evidence after task deletion: %+v err=%v", evidenceList, err)
+	}
+	sessions, err := s.ListAgentSessions(ctx, task.ID)
+	if err != nil || len(sessions) != 0 {
+		t.Fatalf("sessions after task deletion: %+v err=%v", sessions, err)
 	}
 }

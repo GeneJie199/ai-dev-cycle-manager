@@ -10,16 +10,16 @@ import (
 
 // FileStatus is one path from `git status --porcelain`.
 type FileStatus struct {
-	XY   string `json:"xy"`   // two-letter status code
+	XY   string `json:"xy"` // two-letter status code
 	Path string `json:"path"`
 }
 
 // StatusResult is a summary of working tree status.
 type StatusResult struct {
-	Branch    string       `json:"branch"`
-	Clean     bool         `json:"clean"`
-	Files     []FileStatus `json:"files"`
-	RawPorcelain string    `json:"rawPorcelain,omitempty"`
+	Branch       string       `json:"branch"`
+	Clean        bool         `json:"clean"`
+	Files        []FileStatus `json:"files"`
+	RawPorcelain string       `json:"rawPorcelain,omitempty"`
 }
 
 // BranchInfo describes a local or remote branch.
@@ -61,7 +61,7 @@ func (c *Client) Status(ctx context.Context) (StatusResult, error) {
 
 func parsePorcelain(out string) []FileStatus {
 	if strings.TrimSpace(out) == "" {
-		return nil
+		return []FileStatus{}
 	}
 	lines := strings.Split(out, "\n")
 	files := make([]FileStatus, 0, len(lines))
@@ -82,9 +82,9 @@ func parsePorcelain(out string) []FileStatus {
 
 // Branches lists local branches (and optionally remotes).
 func (c *Client) Branches(ctx context.Context, includeRemote bool) ([]BranchInfo, error) {
-	args := []string{"branch", "-vv", "--format=%(refname:short)|%(HEAD)|%(upstream:short)|%(objectname:short)"}
+	args := []string{"branch", "-vv", "--format=%(refname)|%(refname:short)|%(HEAD)|%(upstream:short)|%(objectname:short)"}
 	if includeRemote {
-		args = []string{"branch", "-a", "-vv", "--format=%(refname:short)|%(HEAD)|%(upstream:short)|%(objectname:short)"}
+		args = []string{"branch", "-a", "-vv", "--format=%(refname)|%(refname:short)|%(HEAD)|%(upstream:short)|%(objectname:short)"}
 	}
 	out, err := c.run(ctx, args...)
 	if err != nil {
@@ -96,20 +96,16 @@ func (c *Client) Branches(ctx context.Context, includeRemote bool) ([]BranchInfo
 	var result []BranchInfo
 	for _, line := range strings.Split(out, "\n") {
 		parts := strings.Split(line, "|")
-		if len(parts) < 2 {
+		if len(parts) < 3 {
 			continue
 		}
-		name := parts[0]
-		current := parts[1] == "*"
+		fullName, name := parts[0], parts[1]
+		current := parts[2] == "*"
 		upstream := ""
-		if len(parts) > 2 {
-			upstream = parts[2]
+		if len(parts) > 3 {
+			upstream = parts[3]
 		}
-		remote := strings.HasPrefix(name, "remotes/") || strings.Contains(name, "/")
-		// Prefer treating refs/remotes style; git branch -a short names often look like origin/main
-		if includeRemote && strings.HasPrefix(name, "origin/") {
-			remote = true
-		}
+		remote := strings.HasPrefix(fullName, "refs/remotes/")
 		if !includeRemote {
 			remote = false
 		}

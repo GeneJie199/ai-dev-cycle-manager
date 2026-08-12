@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
@@ -23,8 +25,14 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	// Reasonable defaults for local single-user app
+	// Keep SQLite pragmas connection-scoped and serialize this local workbench's writes.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if _, err := db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000;`); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -32,6 +40,10 @@ func Open(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("secure database permissions: %w", err)
 	}
 	return s, nil
 }
@@ -44,8 +56,9 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-func (s *Store) migrate() error {
-	const schema = `
+const SchemaVersion = 1
+
+var migrations = []string{`
 CREATE TABLE IF NOT EXISTS repositories (
   id TEXT PRIMARY KEY,
   path TEXT NOT NULL UNIQUE,
@@ -85,14 +98,125 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_criteria_requirement ON acceptance_criteria(requirement_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_requirement ON tasks(requirement_id);
-`
-	_, err := s.db.Exec(schema)
-	return err
+
+CREATE TABLE IF NOT EXISTS task_dependencies (
+  task_id TEXT NOT NULL,
+  depends_on_task_id TEXT NOT NULL,
+  PRIMARY KEY(task_id, depends_on_task_id),
+  FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY(depends_on_task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  CHECK(task_id <> depends_on_task_id)
+);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_parent ON task_dependencies(depends_on_task_id);
+
+CREATE TABLE IF NOT EXISTS evidence (
+  id TEXT PRIMARY KEY,
+  requirement_id TEXT NOT NULL,
+  criterion_id TEXT NOT NULL DEFAULT '',
+  task_id TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  uri TEXT NOT NULL DEFAULT '',
+  inline_content TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_requirement ON evidence(requirement_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_criterion ON evidence(criterion_id);
+
+CREATE TABLE IF NOT EXISTS verification_runs (
+  id TEXT PRIMARY KEY,
+  requirement_id TEXT NOT NULL,
+  criterion_id TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL,
+  command TEXT NOT NULL,
+  working_dir TEXT NOT NULL,
+  status TEXT NOT NULL,
+  exit_code INTEGER NOT NULL,
+  output TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  completed_at TEXT NOT NULL,
+  evidence_id TEXT NOT NULL,
+  FOREIGN KEY(requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_runs_requirement ON verification_runs(requirement_id);
+
+CREATE TABLE IF NOT EXISTS agent_sessions (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  prompt TEXT NOT NULL,
+  working_dir TEXT NOT NULL,
+  status TEXT NOT NULL,
+  pid INTEGER NOT NULL DEFAULT 0,
+  log_path TEXT NOT NULL DEFAULT '',
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_task ON agent_sessions(task_id);
+`}
+
+func (s *Store) migrate() error {
+	var version int
+	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	if version > SchemaVersion {
+		return fmt.Errorf("database schema version %d is newer than supported version %d", version, SchemaVersion)
+	}
+	for version < SchemaVersion {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec(migrations[version]); err == nil {
+			_, err = tx.Exec(fmt.Sprintf("PRAGMA user_version = %d", version+1))
+		}
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			_ = tx.Rollback()
+		}
+		if err != nil {
+			return fmt.Errorf("apply database migration %d: %w", version+1, err)
+		}
+		version++
+	}
+	return nil
 }
 
-func nowUTC() time.Time { return time.Now().UTC().Truncate(time.Second) }
+// InsertPlan atomically inserts an AI plan selected by the user. Either every
+// selected criterion and task is persisted, or none are.
+func (s *Store) InsertPlan(ctx context.Context, criteria []models.AcceptanceCriterion, tasks []models.Task) error {
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer transaction.Rollback()
+	for _, criterion := range criteria {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO acceptance_criteria (id, requirement_id, description, satisfied, created_at) VALUES (?, ?, ?, ?, ?)`, criterion.ID, criterion.RequirementID, criterion.Description, boolToInt(criterion.Satisfied), formatTime(criterion.CreatedAt)); err != nil {
+			return err
+		}
+	}
+	for _, task := range tasks {
+		if _, err := transaction.ExecContext(ctx, `INSERT INTO tasks (id, requirement_id, title, description, status, branch, worktree_path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, task.ID, task.RequirementID, task.Title, task.Description, task.Status, task.Branch, task.WorktreePath, formatTime(task.CreatedAt), formatTime(task.UpdatedAt)); err != nil {
+			return err
+		}
+		for _, dependencyID := range task.DependsOn {
+			if _, err := transaction.ExecContext(ctx, `INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?, ?)`, task.ID, dependencyID); err != nil {
+				return err
+			}
+		}
+	}
+	return transaction.Commit()
+}
 
-func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+func nowUTC() time.Time { return time.Now().UTC() }
+
+func formatTime(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
 
 func parseTime(v string) time.Time {
 	t, err := time.Parse(time.RFC3339, v)
@@ -148,6 +272,17 @@ func (s *Store) ListRepositories(ctx context.Context) ([]models.Repository, erro
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) DeleteRepository(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM repositories WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // --- Requirements ---
@@ -279,7 +414,12 @@ func (s *Store) GetCriterion(ctx context.Context, id string) (models.AcceptanceC
 }
 
 func (s *Store) DeleteCriterion(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM acceptance_criteria WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM acceptance_criteria WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -287,7 +427,13 @@ func (s *Store) DeleteCriterion(ctx context.Context, id string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `UPDATE evidence SET criterion_id = '' WHERE criterion_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE verification_runs SET criterion_id = '' WHERE criterion_id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListCriteriaByRequirement(ctx context.Context, requirementID string) ([]models.AcceptanceCriterion, error) {
@@ -338,23 +484,35 @@ func (s *Store) CreateTask(ctx context.Context, requirementID, title, descriptio
 
 func (s *Store) GetTask(ctx context.Context, id string) (models.Task, error) {
 	var t models.Task
-	var status, created, updated string
+	var status, created, updated, dependencies string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, requirement_id, title, description, status, branch, worktree_path, created_at, updated_at
+		`SELECT id, requirement_id, title, description, status, branch, worktree_path, created_at, updated_at,
+		        COALESCE((SELECT group_concat(depends_on_task_id, char(31)) FROM task_dependencies WHERE task_id = tasks.id ORDER BY depends_on_task_id), '')
 		 FROM tasks WHERE id = ?`, id,
-	).Scan(&t.ID, &t.RequirementID, &t.Title, &t.Description, &status, &t.Branch, &t.WorktreePath, &created, &updated)
+	).Scan(&t.ID, &t.RequirementID, &t.Title, &t.Description, &status, &t.Branch, &t.WorktreePath, &created, &updated, &dependencies)
 	if err != nil {
 		return t, err
 	}
 	t.Status = models.TaskStatus(status)
 	t.CreatedAt = parseTime(created)
 	t.UpdatedAt = parseTime(updated)
+	t.DependsOn = splitDependencies(dependencies)
 	return t, nil
 }
 
 func (s *Store) UpdateTask(ctx context.Context, task models.Task) (models.Task, error) {
+	return s.UpdateTaskWithDependencies(ctx, task)
+}
+
+// UpdateTaskWithDependencies atomically updates a task and replaces its dependency set.
+func (s *Store) UpdateTaskWithDependencies(ctx context.Context, task models.Task) (models.Task, error) {
 	task.UpdatedAt = nowUTC()
-	res, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.Task{}, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
 		`UPDATE tasks SET title = ?, description = ?, status = ?, branch = ?, worktree_path = ?, updated_at = ?
 		 WHERE id = ?`,
 		task.Title, task.Description, string(task.Status), task.Branch, task.WorktreePath,
@@ -366,6 +524,17 @@ func (s *Store) UpdateTask(ctx context.Context, task models.Task) (models.Task, 
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return models.Task{}, sql.ErrNoRows
+	}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM task_dependencies WHERE task_id = ?`, task.ID); err != nil {
+		return models.Task{}, err
+	}
+	for _, dependencyID := range task.DependsOn {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO task_dependencies(task_id, depends_on_task_id) VALUES(?, ?)`, task.ID, dependencyID); err != nil {
+			return models.Task{}, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return models.Task{}, err
 	}
 	return s.GetTask(ctx, task.ID)
 }
@@ -385,7 +554,12 @@ func (s *Store) LinkTaskGit(ctx context.Context, taskID, branch, worktreePath st
 }
 
 func (s *Store) DeleteTask(ctx context.Context, id string) error {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `DELETE FROM tasks WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -393,12 +567,16 @@ func (s *Store) DeleteTask(ctx context.Context, id string) error {
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	return nil
+	if _, err := tx.ExecContext(ctx, `UPDATE evidence SET task_id = '' WHERE task_id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) ListTasksByRequirement(ctx context.Context, requirementID string) ([]models.Task, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, requirement_id, title, description, status, branch, worktree_path, created_at, updated_at
+		`SELECT id, requirement_id, title, description, status, branch, worktree_path, created_at, updated_at,
+		        COALESCE((SELECT group_concat(depends_on_task_id, char(31)) FROM task_dependencies WHERE task_id = tasks.id ORDER BY depends_on_task_id), '')
 		 FROM tasks WHERE requirement_id = ? ORDER BY created_at`, requirementID,
 	)
 	if err != nil {
@@ -410,7 +588,8 @@ func (s *Store) ListTasksByRequirement(ctx context.Context, requirementID string
 
 func (s *Store) ListTasks(ctx context.Context) ([]models.Task, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, requirement_id, title, description, status, branch, worktree_path, created_at, updated_at
+		`SELECT id, requirement_id, title, description, status, branch, worktree_path, created_at, updated_at,
+		        COALESCE((SELECT group_concat(depends_on_task_id, char(31)) FROM task_dependencies WHERE task_id = tasks.id ORDER BY depends_on_task_id), '')
 		 FROM tasks ORDER BY created_at`)
 	if err != nil {
 		return nil, err
@@ -423,16 +602,24 @@ func scanTasks(rows *sql.Rows) ([]models.Task, error) {
 	var out []models.Task
 	for rows.Next() {
 		var t models.Task
-		var status, created, updated string
-		if err := rows.Scan(&t.ID, &t.RequirementID, &t.Title, &t.Description, &status, &t.Branch, &t.WorktreePath, &created, &updated); err != nil {
+		var status, created, updated, dependencies string
+		if err := rows.Scan(&t.ID, &t.RequirementID, &t.Title, &t.Description, &status, &t.Branch, &t.WorktreePath, &created, &updated, &dependencies); err != nil {
 			return nil, err
 		}
 		t.Status = models.TaskStatus(status)
 		t.CreatedAt = parseTime(created)
 		t.UpdatedAt = parseTime(updated)
+		t.DependsOn = splitDependencies(dependencies)
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+func splitDependencies(value string) []string {
+	if value == "" {
+		return []string{}
+	}
+	return strings.Split(value, string(rune(31)))
 }
 
 func boolToInt(b bool) int {

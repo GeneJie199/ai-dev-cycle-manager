@@ -1,6 +1,6 @@
 // Package agent defines AI agent adapter contracts.
-// Implementations that invoke Codex (or other tools) live outside this file;
-// only the interface is provided here — no fake "completed" runtime.
+// The web workflow invokes installed CLIs directly. This interface remains an
+// injection point for desktop hosts that need a different process supervisor.
 package agent
 
 import (
@@ -33,9 +33,9 @@ type StartOptions struct {
 
 // Session is a handle for a started Codex CLI process.
 type Session struct {
-	ID        string
+	ID         string
 	WorkingDir string
-	StartedAt time.Time
+	StartedAt  time.Time
 }
 
 // StatusInfo is a point-in-time view of a session.
@@ -47,9 +47,8 @@ type StatusInfo struct {
 }
 
 // CodexAdapter is the contract for driving the Codex CLI from the app.
-// Wails (or other hosts) can inject a concrete implementation later.
-// This package intentionally does not ship a production runner that claims
-// Codex completed work without actually invoking the CLI.
+// Wails (or other hosts) can inject a concrete implementation when they do not
+// want to use the built-in external-process workflow.
 type CodexAdapter interface {
 	// Start launches a Codex CLI session with the given options.
 	Start(ctx context.Context, opts StartOptions) (Session, error)

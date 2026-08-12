@@ -97,3 +97,21 @@ func TestDiff(t *testing.T) {
 		t.Fatal("expected HasDiff true")
 	}
 }
+
+func TestBranchesDoNotTreatSlashedLocalNameAsRemote(t *testing.T) {
+	dir := initTempRepo(t)
+	client := NewClient(dir)
+	if _, err := client.run(context.Background(), "branch", "feature/api-client"); err != nil {
+		t.Fatal(err)
+	}
+
+	branches, err := client.Branches(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, branch := range branches {
+		if branch.Name == "feature/api-client" && branch.Remote {
+			t.Fatalf("local branch with slash classified as remote: %+v", branch)
+		}
+	}
+}

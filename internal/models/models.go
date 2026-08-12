@@ -38,6 +38,7 @@ type Task struct {
 	Title         string     `json:"title"`
 	Description   string     `json:"description"`
 	Status        TaskStatus `json:"status"`
+	DependsOn     []string   `json:"dependsOn"`
 	Branch        string     `json:"branch"`       // 独立工作版本
 	WorktreePath  string     `json:"worktreePath"` // 隔离开发目录
 	CreatedAt     time.Time  `json:"createdAt"`
@@ -50,4 +51,53 @@ type Repository struct {
 	Path      string    `json:"path"`
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+// Evidence is a durable proof attached to a requirement and optionally one criterion or task.
+type Evidence struct {
+	ID            string            `json:"id"`
+	RequirementID string            `json:"requirementId"`
+	CriterionID   string            `json:"criterionId,omitempty"`
+	TaskID        string            `json:"taskId,omitempty"`
+	Kind          string            `json:"kind"`
+	Title         string            `json:"title"`
+	Status        string            `json:"status"`
+	URI           string            `json:"uri,omitempty"`
+	Inline        string            `json:"inline,omitempty"`
+	Metadata      map[string]string `json:"metadata,omitempty"`
+	CreatedAt     time.Time         `json:"createdAt"`
+}
+
+// VerificationRun records one deterministic build, test, lint, or smoke command.
+type VerificationRun struct {
+	ID                   string    `json:"id"`
+	RequirementID        string    `json:"requirementId"`
+	CriterionID          string    `json:"criterionId,omitempty"`
+	Name                 string    `json:"name"`
+	Command              string    `json:"command"`
+	WorkingDir           string    `json:"workingDir"`
+	Status               string    `json:"status"`
+	ExitCode             int       `json:"exitCode"`
+	Output               string    `json:"output"`
+	StartedAt            time.Time `json:"startedAt"`
+	CompletedAt          time.Time `json:"completedAt"`
+	EvidenceID           string    `json:"evidenceId"`
+	DurationMilliseconds int64     `json:"durationMilliseconds"`
+}
+
+// AgentSession links an external coding agent process to a development task.
+type AgentSession struct {
+	ID                   string    `json:"id"`
+	TaskID               string    `json:"taskId"`
+	Provider             string    `json:"provider"`
+	Prompt               string    `json:"-"`
+	WorkingDir           string    `json:"-"`
+	Status               string    `json:"status"`
+	PID                  int       `json:"pid,omitempty"`
+	LogPath              string    `json:"-"`
+	StartedAt            time.Time `json:"startedAt"`
+	EndedAt              time.Time `json:"endedAt,omitempty"`
+	DurationMilliseconds int64     `json:"durationMilliseconds"`
+	LogLimitBytes        int64     `json:"logLimitBytes"`
+	CostStatus           string    `json:"costStatus"`
 }

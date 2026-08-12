@@ -1,0 +1,14 @@
+[Unit]
+Description=DevCycle local development workbench
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/devcycle serve --db %h/.local/share/devcycle/devcycle.db --addr 127.0.0.1:8766
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

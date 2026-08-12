@@ -27,5 +27,6 @@ coverage.out
 Thumbs.db
 
 # Local scratch
+/.qa/
 /tmp/
 /worktrees/

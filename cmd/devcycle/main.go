@@ -6,15 +6,22 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/app"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/git"
+	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
+	"github.com/GeneJie199/ai-dev-cycle-manager/internal/web"
 )
+
+var version = "dev"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -26,6 +33,8 @@ func main() {
 	ctx := context.Background()
 
 	switch cmd {
+	case "version", "--version":
+		fmt.Println(version)
 	case "demo":
 		if err := runDemo(ctx, args); err != nil {
 			fatal(err)
@@ -62,6 +71,18 @@ func main() {
 		if err := runTask(ctx, args); err != nil {
 			fatal(err)
 		}
+	case "serve":
+		if err := runServe(ctx, args); err != nil {
+			fatal(err)
+		}
+	case "evidence":
+		if err := runEvidence(ctx, args); err != nil {
+			fatal(err)
+		}
+	case "verify":
+		if err := runVerify(ctx, args); err != nil {
+			fatal(err)
+		}
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -79,6 +100,7 @@ Terminology:
   Worktree = 隔离开发目录
 
 Usage:
+  devcycle version
   devcycle demo [--repo PATH] [--db PATH]
       End-to-end demo: init temp git repo (or use --repo), import, create
       requirement + criteria + task, create branch/worktree, print summary.
@@ -93,9 +115,16 @@ Usage:
   devcycle worktree remove --repo PATH --path WT [--force]
   devcycle requirement create --title T [--desc D] [--db PATH]
   devcycle requirement list [--db PATH]
+  devcycle requirement export --id ID [--out FILE] [--db PATH]
+  devcycle requirement report --id ID [--out FILE] [--db PATH]
+  devcycle evidence add --req ID --kind test --title T [--criterion ID --inline TEXT --uri PATH]
+  devcycle evidence list --req ID [--db PATH]
+  devcycle verify --req ID --name test --command "go test ./..." --cwd PATH [--criterion ID]
   devcycle task create --req ID --title T [--desc D] [--db PATH]
   devcycle task link --repo PATH --task ID --branch B --path WT [--db PATH]
   devcycle task list [--db PATH]
+  devcycle serve [--db PATH] [--addr 127.0.0.1:8766]
+      Local web workbench (UI + JSON API). Loopback only.
 
 Default DB: ./devcycle.db (override with --db or DEVCYCLE_DB).
 `)
@@ -215,7 +244,7 @@ func runDiff(ctx context.Context, args []string) error {
 
 func runWorktree(ctx context.Context, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: worktree list|add|remove ...")
+		return fmt.Errorf("usage: worktree list|add|remove")
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -271,7 +300,7 @@ func runWorktree(ctx context.Context, args []string) error {
 
 func runRequirement(ctx context.Context, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: requirement create|list ...")
+		return fmt.Errorf("usage: requirement create|list|export")
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -311,14 +340,139 @@ func runRequirement(ctx context.Context, args []string) error {
 		}
 		printJSON(list)
 		return nil
+	case "export":
+		fs := flag.NewFlagSet("requirement export", flag.ExitOnError)
+		id := fs.String("id", "", "requirement id")
+		out := fs.String("out", "", "output file (stdout when empty)")
+		dbPath := defaultDB(fs)
+		_ = fs.Parse(rest)
+		if *id == "" {
+			return fmt.Errorf("--id is required")
+		}
+		a, err := openApp(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer a.Close()
+		candidate, err := a.ExportReleaseCandidate(ctx, *id)
+		if err != nil {
+			return err
+		}
+		if *out == "" {
+			printJSON(candidate)
+			return nil
+		}
+		b, err := json.MarshalIndent(candidate, "", "  ")
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(*out, append(b, '\n'), 0o600)
+	case "report":
+		fs := flag.NewFlagSet("requirement report", flag.ExitOnError)
+		id := fs.String("id", "", "requirement id")
+		out := fs.String("out", "", "output file (stdout when empty)")
+		dbPath := defaultDB(fs)
+		_ = fs.Parse(rest)
+		if *id == "" {
+			return fmt.Errorf("--id is required")
+		}
+		a, err := openApp(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer a.Close()
+		report, err := a.DevelopmentReport(ctx, *id)
+		if err != nil {
+			return err
+		}
+		if *out == "" {
+			printJSON(report)
+			return nil
+		}
+		b, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(*out, append(b, '\n'), 0o600)
 	default:
 		return fmt.Errorf("unknown requirement subcommand: %s", sub)
 	}
 }
 
+func runEvidence(ctx context.Context, args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: evidence add|list")
+	}
+	switch args[0] {
+	case "add":
+		fs := flag.NewFlagSet("evidence add", flag.ExitOnError)
+		req := fs.String("req", "", "requirement id")
+		criterion := fs.String("criterion", "", "criterion id")
+		task := fs.String("task", "", "task id")
+		kind := fs.String("kind", "manual", "evidence kind")
+		title := fs.String("title", "", "title")
+		status := fs.String("status", "passed", "passed, failed, or informational")
+		uri := fs.String("uri", "", "artifact URI/path")
+		inline := fs.String("inline", "", "inline evidence text")
+		dbPath := defaultDB(fs)
+		_ = fs.Parse(args[1:])
+		a, err := openApp(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer a.Close()
+		e, err := a.AddEvidence(ctx, models.Evidence{RequirementID: *req, CriterionID: *criterion, TaskID: *task, Kind: *kind, Title: *title, Status: *status, URI: *uri, Inline: *inline})
+		if err != nil {
+			return err
+		}
+		printJSON(e)
+		return nil
+	case "list":
+		fs := flag.NewFlagSet("evidence list", flag.ExitOnError)
+		req := fs.String("req", "", "requirement id")
+		dbPath := defaultDB(fs)
+		_ = fs.Parse(args[1:])
+		if *req == "" {
+			return fmt.Errorf("--req is required")
+		}
+		a, err := openApp(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer a.Close()
+		items, err := a.ListEvidence(ctx, *req)
+		if err != nil {
+			return err
+		}
+		printJSON(items)
+		return nil
+	default:
+		return fmt.Errorf("unknown evidence subcommand: %s", args[0])
+	}
+}
+func runVerify(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	req := fs.String("req", "", "requirement id")
+	criterion := fs.String("criterion", "", "criterion id")
+	name := fs.String("name", "verification", "run name")
+	command := fs.String("command", "", "command to run")
+	cwd := fs.String("cwd", ".", "working directory")
+	timeout := fs.Duration("timeout", 10*time.Minute, "timeout")
+	dbPath := defaultDB(fs)
+	_ = fs.Parse(args)
+	a, err := openApp(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+	run, err := a.RunVerification(ctx, *req, *criterion, *name, *command, *cwd, *timeout)
+	printJSON(run)
+	return err
+}
+
 func runTask(ctx context.Context, args []string) error {
 	if len(args) < 1 {
-		return fmt.Errorf("usage: task create|link|list ...")
+		return fmt.Errorf("usage: task create|link|list")
 	}
 	sub := args[0]
 	rest := args[1:]
@@ -384,6 +538,28 @@ func runTask(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("unknown task subcommand: %s", sub)
 	}
+}
+
+func runServe(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ExitOnError)
+	dbPath := defaultDB(fs)
+	addr := fs.String("addr", "127.0.0.1:8766", "loopback listen address")
+	_ = fs.Parse(args)
+
+	a, err := openApp(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer a.Close()
+
+	srv, err := web.NewServer(a, log.New(os.Stderr, "[devcycle] ", log.LstdFlags))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("DB: %s\nOpen http://%s in your browser (Ctrl+C to stop)\n", a.DBPath, *addr)
+	serveCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return srv.Serve(serveCtx, *addr)
 }
 
 func runDemo(ctx context.Context, args []string) error {

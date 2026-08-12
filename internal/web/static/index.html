@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevCycle 工作台</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="product-brand"><span class="suite-kicker">AI DEVOPS OPEN SUITE</span><div><strong class="product-name">DevCycle</strong><span class="product-subtitle">交付工作台</span></div></div>
+  <div class="topbar-actions"><span class="topbar-note">需求 → 验收 → 任务 → 验证 → 发布</span><details class="suite-switcher"><summary>模块</summary><div class="suite-menu"><a data-suite="devcycle" class="current">DevCycle<span>研发交付</span></a><a data-suite="infrascout">InfraScout<span>基础设施发现</span></a><a data-suite="fleetscope">FleetScope<span>原生监控</span></a><a data-suite="releaseguard">ReleaseGuard<span>发布门禁</span></a></div></details></div>
+</header>
+
+<nav id="mainnav" aria-label="主导航">
+  <a href="#/workbench" data-nav="workbench">工作台</a>
+  <a href="#/git" data-nav="git">Git 工具</a>
+  <a href="#/repos" data-nav="repos">仓库</a>
+</nav>
+
+<div id="toast" class="hidden" role="status" aria-live="polite"></div>
+
+<main>
+  <!-- 工作台：以单一需求上下文为核心 -->
+  <section id="view-workbench" class="view active" aria-label="需求工作台">
+    <div class="wb-layout">
+      <aside class="req-panel" aria-label="需求列表">
+        <div class="aside-head"><div><strong>交付需求</strong><span id="req-count">0 项</span></div></div>
+        <details class="composer">
+          <summary>新建需求</summary>
+        <form id="form-create-req">
+          <label for="req-title">标题</label>
+          <input id="req-title" name="title" required placeholder="一句话说清楚要做什么">
+          <label for="req-desc">描述（可选）</label>
+          <textarea id="req-desc" name="description" rows="2" placeholder="背景、约束、期望结果"></textarea>
+          <div class="actions">
+            <button type="submit" class="btn">创建需求</button>
+          </div>
+        </form>
+        </details>
+        <div id="req-list" class="list"></div>
+      </aside>
+
+      <div class="req-detail">
+        <div id="req-empty" class="empty">从左侧选择一个需求，或先创建一个新需求。</div>
+
+        <div id="req-content" class="hidden">
+          <div id="req-header"></div>
+          <div id="readiness-band" aria-label="发布就绪概览"></div>
+
+          <nav id="workbench-nav" class="section-nav" aria-label="需求工作区导航">
+            <a href="#" data-wb-mode="plan">规划与执行</a>
+            <a href="#" data-wb-mode="verify">验证与证据</a>
+            <a href="#" data-wb-mode="release">报告与候选</a>
+          </nav>
+
+          <section class="block" data-wb-panel="plan" aria-label="AI 辅助规划">
+            <div class="section-heading"><div><h3>AI 辅助规划</h3><p>生成可审阅建议；只有勾选并应用的条目才会写入。</p></div><span class="status-dot" id="ai-provider-status">检测中</span></div>
+            <form id="form-ai-plan" class="tool-surface">
+              <div class="grid-2">
+                <label for="ai-provider">模型提供方<select id="ai-provider" name="provider" required></select></label>
+                <label for="ai-context">本次补充约束<input id="ai-context" name="additionalContext" maxlength="8000" placeholder="例如：必须兼容 Windows Server 2022"></label>
+              </div>
+              <div class="actions"><button type="submit" class="btn">生成规划建议</button><span class="form-note">发送前自动脱敏；模型在空临时目录中以只读方式运行</span></div>
+            </form>
+            <div id="ai-plan-preview" class="ai-preview"></div>
+          </section>
+
+          <section class="block" data-wb-panel="plan" aria-label="验收标准">
+            <h3>验收标准 <span class="hint" title="怎样算做完：每条都是可核对的小条件；标记通过必须有证据">?</span></h3>
+            <details class="composer">
+              <summary>添加验收标准</summary>
+            <form id="form-create-criterion">
+              <label for="criterion-desc">验收条件</label>
+              <input id="criterion-desc" name="description" required placeholder="例如：登录接口返回 200 且含 token">
+              <div class="actions">
+                <button type="submit" class="btn">添加标准</button>
+              </div>
+            </form>
+            </details>
+            <div id="criteria-list" class="list"></div>
+          </section>
+
+          <section class="block" data-wb-panel="plan" aria-label="任务与 Agent">
+            <h3>任务与 Agent <span class="hint" title="需求拆出来的可执行条目；可在任务上创建隔离工作区并启动 codex / kimi / claude 会话">?</span></h3>
+            <details class="composer">
+              <summary>新建任务</summary>
+            <form id="form-create-task">
+              <label for="task-title">任务标题</label>
+              <input id="task-title" name="title" required placeholder="具体要做的一件事">
+              <label for="task-desc">描述（可选）</label>
+              <textarea id="task-desc" name="description" rows="2" placeholder="补充说明"></textarea>
+              <div class="actions">
+                <button type="submit" class="btn">新建任务</button>
+              </div>
+            </form>
+            </details>
+            <div id="task-list" class="list"></div>
+          </section>
+
+          <section class="block" data-wb-panel="verify" aria-label="验证运行">
+            <h3>验证运行 <span class="hint" title="对当前需求执行确定性的构建/测试/检查命令，结果自动沉淀为证据">?</span></h3>
+            <details class="composer">
+              <summary>运行一项验证</summary>
+            <form id="form-run">
+              <div class="grid-2">
+                <div>
+                  <label for="run-name">名称</label>
+                  <input id="run-name" name="name" required placeholder="例如：单元测试">
+                </div>
+                <div>
+                  <label for="run-criterion">关联验收标准（可选）</label>
+                  <select id="run-criterion" name="criterionId"></select>
+                </div>
+              </div>
+              <label for="run-command">命令</label>
+              <input id="run-command" name="command" required placeholder="例如：go test ./... 或 npm test">
+              <div class="grid-2">
+                <div>
+                  <label for="run-workdir">工作目录（可选，默认服务进程目录）</label>
+                  <input id="run-workdir" name="workingDir" placeholder="留空则使用服务进程目录">
+                </div>
+                <div>
+                  <label for="run-timeout">超时秒数（可选，默认 600）</label>
+                  <input id="run-timeout" name="timeoutSeconds" type="number" min="1" max="1800" placeholder="600">
+                </div>
+              </div>
+              <div class="actions">
+                <button type="submit" class="btn">运行验证</button>
+                <span class="form-note">运行期间请稍候，命令最长执行 30 分钟</span>
+              </div>
+            </form>
+            </details>
+            <div id="run-list" class="list"></div>
+          </section>
+
+          <section class="block" data-wb-panel="verify" aria-label="证据">
+            <h3>证据 <span class="hint" title="证明验收标准已满足的材料：测试、构建、截图、日志、人工确认等">?</span></h3>
+            <details class="composer">
+              <summary>登记人工证据</summary>
+            <form id="form-evidence">
+              <div class="grid-2">
+                <div>
+                  <label for="ev-kind">类型</label>
+                  <select id="ev-kind" name="kind">
+                    <option value="manual">人工确认</option>
+                    <option value="test">测试</option>
+                    <option value="build">构建</option>
+                    <option value="lint">静态检查</option>
+                    <option value="screenshot">截图</option>
+                    <option value="log">日志</option>
+                    <option value="commit">提交</option>
+                    <option value="report">报告</option>
+                  </select>
+                </div>
+                <div>
+                  <label for="ev-status">结论</label>
+                  <select id="ev-status" name="status">
+                    <option value="passed">通过</option>
+                    <option value="failed">未通过</option>
+                    <option value="informational">仅供参考</option>
+                  </select>
+                </div>
+              </div>
+              <label for="ev-title">标题</label>
+              <input id="ev-title" name="title" required placeholder="例如：手工回归登录流程通过">
+              <div class="grid-2">
+                <div>
+                  <label for="ev-criterion">关联验收标准（可选）</label>
+                  <select id="ev-criterion" name="criterionId"></select>
+                </div>
+                <div>
+                  <label for="ev-uri">外部链接（可选）</label>
+                  <input id="ev-uri" name="uri" placeholder="例如 CI 记录或截图地址">
+                </div>
+              </div>
+              <label for="ev-inline">说明（可选）</label>
+              <textarea id="ev-inline" name="inline" rows="2" placeholder="关键输出、结论或备注"></textarea>
+              <div class="actions">
+                <button type="submit" class="btn">登记证据</button>
+              </div>
+            </form>
+            </details>
+            <div id="evidence-list" class="list"></div>
+          </section>
+
+          <section class="block" data-wb-panel="release" aria-label="报告与发布">
+            <h3>报告与发布候选 <span class="hint" title="把当前需求的验收、任务、证据与验证运行汇成结构化报告或 lifecycle-spec 风格的发布候选">?</span></h3>
+            <div class="card">
+              <div class="actions">
+                <button id="btn-load-report" type="button" class="btn">生成开发报告</button>
+                <button id="btn-download-report" type="button" class="btn ghost" disabled>下载报告 JSON</button>
+                <button id="btn-load-rc" type="button" class="btn">生成发布候选</button>
+                <button id="btn-download-rc" type="button" class="btn ghost" disabled>下载候选 JSON</button>
+              </div>
+            </div>
+            <div id="report-output"></div>
+            <div id="rc-output"></div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Git 工具 -->
+  <section id="view-git" class="view" aria-label="Git 工具">
+    <h2>Git 状态 <span class="hint" title="所选仓库当前改到哪了：分支、未提交文件、最近提交、改动摘要与影响分析">?</span></h2>
+    <div class="card">
+      <label for="git-repo-select">选择仓库</label>
+      <select id="git-repo-select"></select>
+	  <div class="grid-2 git-range">
+		<label for="git-from">起点（可选）<input id="git-from" placeholder="例如 HEAD、main、v1.2.0"></label>
+		<label for="git-to">终点（可选）<input id="git-to" placeholder="留空则比较工作区"></label>
+	  </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="git-stat" checked> 只看摘要(--stat)</label>
+        <label class="check"><input type="checkbox" id="git-staged"> 只看已暂存(--staged)</label>
+        <button id="btn-refresh-git" type="button" class="btn ghost">刷新</button>
+      </div>
+    </div>
+    <div id="git-status" class="list"></div>
+	<div class="section-heading"><div><h3>文件级改动</h3><p id="git-diff-summary">等待读取</p></div></div>
+	<div id="git-files" class="diff-files"></div>
+	<details class="raw-diff"><summary>查看原始 Diff</summary><pre id="git-diff" class="code" tabindex="0"></pre></details>
+    <h3>分支</h3>
+    <div id="git-branches" class="list"></div>
+    <h3>最近提交</h3>
+    <div id="git-log" class="list"></div>
+	<div class="section-heading"><div><h3>影响分析</h3><p>规则分析提供确定性基线，AI 解释只基于上方文件级元数据。</p></div></div>
+	<div class="tool-surface">
+      <div class="actions">
+        <button id="btn-impact" type="button" class="btn">分析改动影响</button>
+		<label class="inline-select">模型<select id="git-ai-provider"></select></label>
+		<button id="btn-explain-diff" type="button" class="btn ghost">AI 解释改动</button>
+      </div>
+    </div>
+    <div id="git-impact"></div>
+	<div id="git-ai-explanation"></div>
+  </section>
+
+  <!-- 仓库管理 -->
+  <section id="view-repos" class="view" aria-label="仓库管理">
+    <h2>仓库 <span class="hint" title="本地 Git 仓库的注册表；导入后才能查看状态、改动与影响分析">?</span></h2>
+    <form id="form-import-repo" class="card">
+      <label for="repo-path">仓库路径</label>
+      <input id="repo-path" name="path" required placeholder="例如 C:\work\my-repo 或 /home/me/my-repo">
+      <div class="actions">
+        <button type="submit" class="btn">导入仓库</button>
+      </div>
+    </form>
+    <div id="repo-list" class="list"></div>
+  </section>
+</main>
+
+<dialog id="confirm-dialog">
+  <form method="dialog" class="confirm-card">
+    <div class="confirm-head"><h2 id="confirm-title">确认操作</h2><button value="cancel" class="icon-btn" aria-label="关闭">×</button></div>
+    <p id="confirm-message"></p>
+    <div class="actions confirm-actions"><button value="cancel" class="btn ghost">取消</button><button id="confirm-submit" value="confirm" class="btn danger-fill">确认</button></div>
+  </form>
+</dialog>
+
+<footer>
+  <span>本页面仅监听本机（loopback），数据保存在本地 SQLite。</span>
+</footer>
+
+<script src="/suite.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
