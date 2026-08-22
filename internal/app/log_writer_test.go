@@ -73,3 +73,31 @@ func TestTailBufferBoundsVerificationOutput(t *testing.T) {
 		t.Fatalf("output = %q", got)
 	}
 }
+
+func TestRedactingLogWriterHandlesSplitSecretsAndPrivateKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "redacted.log")
+	writer, err := openRedactingLog(path, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chunk := range []string{"password=hun", "ter2\n-----BEGIN PRIVATE KEY-----\n", "private-material\n", "-----END PRIVATE KEY-----\n", "token=last-secret"} {
+		if _, err = writer.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"hunter2", "private-material", "last-secret"} {
+		if bytes.Contains(contents, []byte(secret)) {
+			t.Fatalf("log leaked %q: %s", secret, contents)
+		}
+	}
+	if !bytes.Contains(contents, []byte("[REDACTED PRIVATE KEY]")) {
+		t.Fatalf("private key marker missing: %s", contents)
+	}
+}

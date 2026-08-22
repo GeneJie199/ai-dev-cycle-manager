@@ -1,10 +1,14 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
+	"strings"
 	"sync"
+
+	devai "github.com/GeneJie199/ai-dev-cycle-manager/internal/ai"
 )
 
 const maxAgentLogBytes int64 = 10 << 20
@@ -15,6 +19,13 @@ type boundedLogWriter struct {
 	mu      sync.Mutex
 	file    *os.File
 	maximum int64
+}
+
+type redactingLogWriter struct {
+	mu         sync.Mutex
+	target     *boundedLogWriter
+	pending    []byte
+	privateKey bool
 }
 
 type tailBuffer struct {
@@ -56,6 +67,80 @@ func openBoundedLog(path string, maximum int64) (*boundedLogWriter, error) {
 		return nil, err
 	}
 	return &boundedLogWriter{file: file, maximum: maximum}, nil
+}
+
+func openRedactingLog(path string, maximum int64) (*redactingLogWriter, error) {
+	target, err := openBoundedLog(path, maximum)
+	if err != nil {
+		return nil, err
+	}
+	return &redactingLogWriter{target: target}, nil
+}
+
+func (writer *redactingLogWriter) Write(data []byte) (int, error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if writer.target == nil {
+		return 0, os.ErrClosed
+	}
+	originalLength := len(data)
+	writer.pending = append(writer.pending, data...)
+	for {
+		lineEnd := bytes.IndexByte(writer.pending, '\n')
+		if lineEnd < 0 {
+			break
+		}
+		line := string(writer.pending[:lineEnd+1])
+		writer.pending = writer.pending[lineEnd+1:]
+		if err := writer.writeRedactedLine(line); err != nil {
+			return 0, err
+		}
+	}
+	if len(writer.pending) > int(maxAgentLogBytes) {
+		redacted, _ := devai.Redact(string(writer.pending))
+		if _, err := writer.target.Write([]byte(redacted)); err != nil {
+			return 0, err
+		}
+		writer.pending = writer.pending[:0]
+	}
+	return originalLength, nil
+}
+
+func (writer *redactingLogWriter) writeRedactedLine(line string) error {
+	upper := strings.ToUpper(line)
+	if writer.privateKey {
+		if strings.Contains(upper, "-----END ") && strings.Contains(upper, "PRIVATE KEY-----") {
+			writer.privateKey = false
+		}
+		return nil
+	}
+	if strings.Contains(upper, "-----BEGIN ") && strings.Contains(upper, "PRIVATE KEY-----") {
+		writer.privateKey = !strings.Contains(upper, "-----END ")
+		_, err := writer.target.Write([]byte("[REDACTED PRIVATE KEY]\n"))
+		return err
+	}
+	redacted, _ := devai.Redact(line)
+	_, err := writer.target.Write([]byte(redacted))
+	return err
+}
+
+func (writer *redactingLogWriter) Close() error {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if writer.target == nil {
+		return nil
+	}
+	if len(writer.pending) > 0 {
+		if err := writer.writeRedactedLine(string(writer.pending)); err != nil {
+			_ = writer.target.Close()
+			writer.target = nil
+			return err
+		}
+	}
+	err := writer.target.Close()
+	writer.target = nil
+	writer.pending = nil
+	return err
 }
 
 func (writer *boundedLogWriter) Write(data []byte) (int, error) {

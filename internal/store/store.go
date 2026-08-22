@@ -56,7 +56,7 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-const SchemaVersion = 1
+const SchemaVersion = 3
 
 var migrations = []string{`
 CREATE TABLE IF NOT EXISTS repositories (
@@ -157,6 +157,72 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
   FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_sessions_task ON agent_sessions(task_id);
+`, `
+CREATE TABLE planning_documents (
+  requirement_id TEXT PRIMARY KEY,
+  schema_version TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  source TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT '',
+  document_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  applied_at TEXT,
+  FOREIGN KEY(requirement_id) REFERENCES requirements(id) ON DELETE CASCADE
+);
+
+CREATE TABLE ai_providers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  model TEXT NOT NULL,
+  api_path TEXT NOT NULL DEFAULT '',
+  api_key_header TEXT NOT NULL DEFAULT '',
+  api_key_prefix TEXT NOT NULL DEFAULT '',
+  headers_json TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  timeout_seconds INTEGER NOT NULL DEFAULT 120,
+  secret_ref TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+`, `
+CREATE TABLE agent_adapters (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  command TEXT NOT NULL,
+  args_json TEXT NOT NULL,
+  capabilities_json TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE task_handoffs (
+  id TEXT PRIMARY KEY,
+  requirement_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  from_session_id TEXT,
+  from_adapter TEXT NOT NULL DEFAULT '',
+  to_adapter TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  completed_work_json TEXT NOT NULL DEFAULT '[]',
+  remaining_work_json TEXT NOT NULL DEFAULT '[]',
+  risks_json TEXT NOT NULL DEFAULT '[]',
+  validation_json TEXT NOT NULL DEFAULT '[]',
+  changed_files_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL,
+  accepted_at TEXT,
+  accepted_session_id TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY(requirement_id) REFERENCES requirements(id) ON DELETE CASCADE,
+  FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY(from_session_id) REFERENCES agent_sessions(id) ON DELETE SET NULL
+);
+CREATE INDEX idx_task_handoffs_task ON task_handoffs(task_id, created_at DESC);
 `}
 
 func (s *Store) migrate() error {

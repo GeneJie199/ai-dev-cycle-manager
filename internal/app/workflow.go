@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	devagent "github.com/GeneJie199/ai-dev-cycle-manager/internal/agent"
+	devai "github.com/GeneJie199/ai-dev-cycle-manager/internal/ai"
 	devgit "github.com/GeneJie199/ai-dev-cycle-manager/internal/git"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
 	"github.com/google/uuid"
@@ -20,9 +22,22 @@ func (a *App) AddEvidence(ctx context.Context, e models.Evidence) (models.Eviden
 	if strings.TrimSpace(e.RequirementID) == "" || strings.TrimSpace(e.Kind) == "" || strings.TrimSpace(e.Title) == "" {
 		return e, errors.New("requirementId, kind, and title are required")
 	}
-	allowed := map[string]bool{"test": true, "build": true, "lint": true, "screenshot": true, "log": true, "manual": true, "commit": true, "report": true}
-	if !allowed[e.Kind] {
+	kind, allowed := models.NormalizeEvidenceKind(strings.ToLower(strings.TrimSpace(e.Kind)))
+	if !allowed {
 		return e, fmt.Errorf("unsupported evidence kind %q", e.Kind)
+	}
+	e.Kind = kind
+	e.Title, _ = devai.Redact(strings.TrimSpace(e.Title))
+	e.URI, _ = devai.Redact(strings.TrimSpace(e.URI))
+	e.Inline, _ = devai.Redact(e.Inline)
+	if len(e.Metadata) > 50 {
+		return e, errors.New("evidence metadata must not contain more than 50 entries")
+	}
+	for key, value := range e.Metadata {
+		if len(key) > 100 || len(value) > 4096 {
+			return e, errors.New("evidence metadata keys or values are too long")
+		}
+		e.Metadata[key], _ = devai.Redact(value)
 	}
 	if e.Status == "" {
 		e.Status = "passed"
@@ -122,7 +137,7 @@ func (a *App) StartVerification(ctx context.Context, requirementID, criterionID,
 	if err = os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return models.VerificationRun{}, err
 	}
-	logFile, err := openBoundedLog(logPath, maxAgentLogBytes)
+	logFile, err := openRedactingLog(logPath, maxAgentLogBytes)
 	if err != nil {
 		return models.VerificationRun{}, err
 	}
@@ -157,7 +172,7 @@ func (a *App) StartVerification(ctx context.Context, requirementID, criterionID,
 	return a.withVerificationRuntime(run), nil
 }
 
-func (a *App) finishVerification(run models.VerificationRun, cmd *exec.Cmd, logFile *boundedLogWriter, runCtx context.Context, cancel context.CancelFunc) {
+func (a *App) finishVerification(run models.VerificationRun, cmd *exec.Cmd, logFile *redactingLogWriter, runCtx context.Context, cancel context.CancelFunc) {
 	defer a.verificationWG.Done()
 	defer cancel()
 	runErr := cmd.Wait()
@@ -262,7 +277,7 @@ func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, n
 	cmd.Stdout = commandOutput
 	cmd.Stderr = commandOutput
 	runErr := cmd.Run()
-	output := commandOutput.String()
+	output, _ := devai.Redact(commandOutput.String())
 	exit := 0
 	status := "passed"
 	if runErr != nil {
@@ -289,12 +304,10 @@ func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, n
 }
 func verificationKind(name string) string {
 	n := strings.ToLower(name)
-	for _, k := range []string{"build", "lint", "test"} {
-		if strings.Contains(n, k) {
-			return k
-		}
+	if strings.Contains(n, "test") {
+		return models.EvidenceKindTest
 	}
-	return "test"
+	return models.EvidenceKindCommand
 }
 
 func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt string) (models.AgentSession, error) {
@@ -305,10 +318,18 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 	if task.WorktreePath == "" {
 		return models.AgentSession{}, errors.New("task must be linked to a worktree before starting an agent")
 	}
-	if strings.TrimSpace(prompt) == "" {
+	prompt, _ = devai.Redact(strings.TrimSpace(prompt))
+	if prompt == "" {
 		return models.AgentSession{}, errors.New("prompt is required")
 	}
-	binary, args, err := providerCommand(provider, prompt)
+	adapter, err := a.GetAgentAdapter(ctx, provider)
+	if err != nil {
+		return models.AgentSession{}, fmt.Errorf("agent adapter: %w", err)
+	}
+	if !adapter.Enabled {
+		return models.AgentSession{}, errors.New("agent adapter is disabled")
+	}
+	binary, args, err := devagent.BuildCommand(adapter, prompt)
 	if err != nil {
 		return models.AgentSession{}, err
 	}
@@ -322,7 +343,7 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 		return models.AgentSession{}, err
 	}
 	logPath := filepath.Join(logDir, id+".log")
-	logFile, err := openBoundedLog(logPath, maxAgentLogBytes)
+	logFile, err := openRedactingLog(logPath, maxAgentLogBytes)
 	if err != nil {
 		return models.AgentSession{}, err
 	}
@@ -335,7 +356,7 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 		logFile.Close()
 		return models.AgentSession{}, err
 	}
-	session := models.AgentSession{ID: id, TaskID: taskID, Provider: provider, Prompt: prompt, WorkingDir: task.WorktreePath, Status: "running", PID: cmd.Process.Pid, LogPath: logPath, StartedAt: time.Now().UTC().Truncate(time.Second)}
+	session := models.AgentSession{ID: id, TaskID: taskID, Provider: adapter.ID, Prompt: prompt, WorkingDir: task.WorktreePath, Status: "running", PID: cmd.Process.Pid, LogPath: logPath, StartedAt: time.Now().UTC().Truncate(time.Second)}
 	if session, err = a.Store.CreateAgentSession(ctx, session); err != nil {
 		_ = cmd.Process.Kill()
 		logFile.Close()
@@ -366,16 +387,11 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 }
 
 func providerCommand(provider, prompt string) (string, []string, error) {
-	switch provider {
-	case "codex":
-		return "codex", []string{"exec", prompt}, nil
-	case "kimi":
-		return "kimi", []string{"-p", prompt}, nil
-	case "claude":
-		return "claude", []string{"-p", prompt}, nil
-	default:
-		return "", nil, errors.New("provider must be codex, kimi, or claude")
+	adapter, ok := devagent.BuiltIn(provider)
+	if !ok {
+		return "", nil, errors.New("provider must be a built-in agent adapter")
 	}
+	return devagent.BuildCommand(adapter, prompt)
 }
 
 func (a *App) StopAgentSession(ctx context.Context, id string) (models.AgentSession, error) {
@@ -427,17 +443,26 @@ func (a *App) AgentSessionLog(ctx context.Context, id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return string(b), nil
+	redacted, _ := devai.Redact(string(b))
+	return redacted, nil
 }
 
 type ChangeImpact struct {
-	Files               []string `json:"files"`
-	UserImpact          bool     `json:"userImpact"`
-	APIImpact           bool     `json:"apiImpact"`
-	DatabaseImpact      bool     `json:"databaseImpact"`
-	ConfigurationImpact bool     `json:"configurationImpact"`
-	Risk                string   `json:"risk"`
-	Summary             []string `json:"summary"`
+	Files                 []string `json:"files"`
+	AddedFiles            []string `json:"addedFiles"`
+	ModifiedFiles         []string `json:"modifiedFiles"`
+	DeletedFiles          []string `json:"deletedFiles"`
+	RenamedFiles          []string `json:"renamedFiles"`
+	UserImpact            bool     `json:"userImpact"`
+	APIImpact             bool     `json:"apiImpact"`
+	DatabaseImpact        bool     `json:"databaseImpact"`
+	ConfigurationImpact   bool     `json:"configurationImpact"`
+	SecurityImpact        bool     `json:"securityImpact"`
+	Risk                  string   `json:"risk"`
+	Summary               []string `json:"summary"`
+	RiskReasons           []string `json:"riskReasons"`
+	SuggestedVerification []string `json:"suggestedVerification"`
+	RawDiffAvailable      bool     `json:"rawDiffAvailable"`
 }
 
 func (a *App) AnalyzeChanges(ctx context.Context, repoPath string) (ChangeImpact, error) {
@@ -449,32 +474,69 @@ func (a *App) AnalyzeChangesWithOptions(ctx context.Context, repoPath string, op
 	if err != nil {
 		return ChangeImpact{}, err
 	}
-	out := ChangeImpact{Files: []string{}, Risk: "low", Summary: []string{}}
+	out := ChangeImpact{Files: []string{}, AddedFiles: []string{}, ModifiedFiles: []string{}, DeletedFiles: []string{}, RenamedFiles: []string{}, Risk: "low", Summary: []string{}, RiskReasons: []string{}, SuggestedVerification: []string{}}
 	for _, file := range diff.Files {
 		f := filepath.ToSlash(file.Path)
 		out.Files = append(out.Files, f)
 		classifyImpactPath(&out, f)
+		switch {
+		case file.Untracked || strings.HasPrefix(file.Status, "A") || strings.HasPrefix(file.Status, "?"):
+			out.AddedFiles = append(out.AddedFiles, f)
+		case strings.HasPrefix(file.Status, "D"):
+			out.DeletedFiles = append(out.DeletedFiles, f)
+		case strings.HasPrefix(file.Status, "R"):
+			out.RenamedFiles = append(out.RenamedFiles, f)
+		default:
+			out.ModifiedFiles = append(out.ModifiedFiles, f)
+		}
 	}
-	if out.DatabaseImpact || out.ConfigurationImpact {
+	out.RawDiffAvailable = len(out.Files) > 0
+	if out.DatabaseImpact || out.SecurityImpact {
 		out.Risk = "high"
-	} else if out.APIImpact || len(out.Files) > 10 {
+	} else if out.APIImpact || out.ConfigurationImpact || len(out.Files) > 10 {
 		out.Risk = "medium"
 	}
 	if len(out.Files) == 0 {
 		out.Summary = append(out.Summary, "工作区没有未提交变化")
+		return out, nil
 	}
+	changeParts := []string{}
+	for _, change := range []struct {
+		count int
+		label string
+	}{{len(out.AddedFiles), "新增"}, {len(out.ModifiedFiles), "修改"}, {len(out.DeletedFiles), "删除"}, {len(out.RenamedFiles), "重命名"}} {
+		if change.count > 0 {
+			changeParts = append(changeParts, fmt.Sprintf("%s %d 个文件", change.label, change.count))
+		}
+	}
+	out.Summary = append(out.Summary, strings.Join(changeParts, "，"))
 	if out.UserImpact {
 		out.Summary = append(out.Summary, "包含用户可见界面变化")
+		out.SuggestedVerification = append(out.SuggestedVerification, "验证受影响的主要用户流程、空状态和错误状态", "检查桌面端与移动端布局及键盘可用性")
 	}
 	if out.APIImpact {
 		out.Summary = append(out.Summary, "可能影响接口契约")
+		out.RiskReasons = append(out.RiskReasons, "接口路径或契约文件发生变化，调用方兼容性需要确认")
+		out.SuggestedVerification = append(out.SuggestedVerification, "运行接口契约与向后兼容测试")
 	}
 	if out.DatabaseImpact {
 		out.Summary = append(out.Summary, "包含数据库迁移或结构变化")
+		out.RiskReasons = append(out.RiskReasons, "数据库结构或迁移发生变化，失败可能影响升级与回滚")
+		out.SuggestedVerification = append(out.SuggestedVerification, "在旧版数据副本上验证升级、回滚和数据保留")
 	}
 	if out.ConfigurationImpact {
 		out.Summary = append(out.Summary, "包含部署或配置变化")
+		out.RiskReasons = append(out.RiskReasons, "默认配置或部署文件发生变化，不同环境的行为可能不同")
+		out.SuggestedVerification = append(out.SuggestedVerification, "验证全新安装、默认配置和旧配置升级")
 	}
+	if out.SecurityImpact {
+		out.Summary = append(out.Summary, "涉及认证、权限或安全边界")
+		out.RiskReasons = append(out.RiskReasons, "安全相关代码发生变化，需要确认拒绝路径和最小权限")
+		out.SuggestedVerification = append(out.SuggestedVerification, "验证未授权、低权限、凭据脱敏和审计路径")
+	}
+	out.SuggestedVerification = append(out.SuggestedVerification, "运行与变更文件相关的自动化测试", "在提交前查看原始 Git Diff")
+	out.RiskReasons = uniqueStrings(out.RiskReasons)
+	out.SuggestedVerification = uniqueStrings(out.SuggestedVerification)
 	return out, nil
 }
 
@@ -494,6 +556,21 @@ func classifyImpactPath(out *ChangeImpact, file string) {
 	if hasPathSegment(segments, "ui", "web", "frontend", "client", "static", "templates") || strings.HasSuffix(base, ".html") || strings.HasSuffix(base, ".css") || strings.HasSuffix(base, ".scss") || strings.HasSuffix(base, ".vue") || strings.HasSuffix(base, ".svelte") {
 		out.UserImpact = true
 	}
+	if hasPathSegment(segments, "auth", "authentication", "authorization", "security", "permission", "permissions", "rbac", "iam", "crypto") || strings.Contains(base, "secret") || strings.Contains(base, "credential") {
+		out.SecurityImpact = true
+	}
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" && !seen[value] {
+			seen[value] = true
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func hasPathSegment(segments []string, candidates ...string) bool {

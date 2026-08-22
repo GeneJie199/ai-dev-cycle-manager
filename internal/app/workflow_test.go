@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
@@ -158,6 +160,8 @@ func TestProviderCommand(t *testing.T) {
 		{provider: "codex", binary: "codex", args: []string{"exec", "do the work"}},
 		{provider: "kimi", binary: "kimi", args: []string{"-p", "do the work"}},
 		{provider: "claude", binary: "claude", args: []string{"-p", "do the work"}},
+		{provider: "gemini", binary: "gemini", args: []string{"-p", "do the work"}},
+		{provider: "opencode", binary: "opencode", args: []string{"run", "do the work"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.provider, func(t *testing.T) {
@@ -169,6 +173,50 @@ func TestProviderCommand(t *testing.T) {
 	}
 	if _, _, err := providerCommand("unknown", "x"); err == nil {
 		t.Fatal("expected unsupported provider error")
+	}
+}
+
+func TestEvidenceKindsAreCanonicalAndContentIsRedacted(t *testing.T) {
+	a := openTestApp(t)
+	requirement, _ := a.CreateRequirement(context.Background(), "Safe evidence", "")
+	evidence, err := a.AddEvidence(context.Background(), models.Evidence{RequirementID: requirement.ID, Kind: "manual", Title: "Reviewed token=title-secret", Status: "passed", Inline: "password=hunter2", URI: "https://user:url-secret@example.com/result", Metadata: map[string]string{"command": "api_key=metadata-secret"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(evidence)
+	for _, secret := range []string{"title-secret", "hunter2", "url-secret", "metadata-secret"} {
+		if bytes.Contains(encoded, []byte(secret)) {
+			t.Fatalf("evidence leaked %q: %s", secret, encoded)
+		}
+	}
+	if evidence.Kind != models.EvidenceKindHumanConfirmation {
+		t.Fatalf("kind=%q", evidence.Kind)
+	}
+}
+
+func TestTaskHandoffValidatesSessionOwnershipAndAcceptance(t *testing.T) {
+	a := openTestApp(t)
+	ctx := context.Background()
+	requirement, _ := a.CreateRequirement(ctx, "Agent handoff", "")
+	task, _ := a.CreateTask(ctx, requirement.ID, "Implement feature", "")
+	otherTask, _ := a.CreateTask(ctx, requirement.ID, "Review feature", "")
+	source, _ := a.Store.CreateAgentSession(ctx, models.AgentSession{TaskID: task.ID, Provider: "kimi", Prompt: "implement", WorkingDir: t.TempDir(), Status: "completed"})
+	wrong, _ := a.Store.CreateAgentSession(ctx, models.AgentSession{TaskID: otherTask.ID, Provider: "codex", Prompt: "review", WorkingDir: t.TempDir(), Status: "completed"})
+	if _, err := a.CreateTaskHandoff(ctx, task.ID, TaskHandoffInput{FromSessionID: wrong.ID, ToAdapter: "codex", Summary: "Continue the implementation", RemainingWork: []string{"Review changes"}}); err == nil {
+		t.Fatal("expected cross-task source session rejection")
+	}
+	handoff, err := a.CreateTaskHandoff(ctx, task.ID, TaskHandoffInput{FromSessionID: source.ID, ToAdapter: "codex", Summary: "Implementation complete; review next", CompletedWork: []string{"Added the implementation"}, RemainingWork: []string{"Review the diff"}, Validation: []string{"Run go test"}})
+	if err != nil || handoff.FromAdapter != "kimi" || handoff.ToAdapter != "codex" {
+		t.Fatalf("handoff=%+v err=%v", handoff, err)
+	}
+	wrongTarget, _ := a.Store.CreateAgentSession(ctx, models.AgentSession{TaskID: task.ID, Provider: "kimi", Prompt: "accept", WorkingDir: t.TempDir(), Status: "completed"})
+	if _, err = a.AcceptTaskHandoff(ctx, handoff.ID, wrongTarget.ID); err == nil {
+		t.Fatal("expected target adapter rejection")
+	}
+	accepting, _ := a.Store.CreateAgentSession(ctx, models.AgentSession{TaskID: task.ID, Provider: "codex", Prompt: "accept", WorkingDir: t.TempDir(), Status: "completed"})
+	accepted, err := a.AcceptTaskHandoff(ctx, handoff.ID, accepting.ID)
+	if err != nil || accepted.Status != models.HandoffStatusAccepted || accepted.AcceptedSession != accepting.ID {
+		t.Fatalf("accepted=%+v err=%v", accepted, err)
 	}
 }
 
@@ -214,8 +262,40 @@ func TestImpactClassificationUsesPathSegments(t *testing.T) {
 	classifyImpactPath(&impact, "deploy/compose.yaml")
 	classifyImpactPath(&impact, "web/static/app.css")
 	classifyImpactPath(&impact, "migrations/001_orders.sql")
-	if !impact.APIImpact || !impact.ConfigurationImpact || !impact.UserImpact || !impact.DatabaseImpact {
+	classifyImpactPath(&impact, "internal/auth/session.go")
+	if !impact.APIImpact || !impact.ConfigurationImpact || !impact.UserImpact || !impact.DatabaseImpact || !impact.SecurityImpact {
 		t.Fatalf("impact = %+v", impact)
+	}
+}
+
+func TestHumanizedGitImpactIncludesChangesRisksAndVerification(t *testing.T) {
+	a := openTestApp(t)
+	repo := initReleaseRepo(t)
+	files := map[string]string{
+		"main.go":                  "package main\n\nfunc main() {}\n",
+		"web/login.html":           "<main>Login</main>\n",
+		"migrations/001_login.sql": "ALTER TABLE users ADD COLUMN phone TEXT;\n",
+		"internal/auth/session.go": "package auth\n",
+		"config/app.yaml":          "login: true\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(repo, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	impact, err := a.AnalyzeChanges(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(impact.AddedFiles) != 4 || len(impact.ModifiedFiles) != 1 || impact.Risk != "high" || !impact.RawDiffAvailable {
+		t.Fatalf("impact=%+v", impact)
+	}
+	if !impact.UserImpact || !impact.DatabaseImpact || !impact.ConfigurationImpact || !impact.SecurityImpact || len(impact.RiskReasons) < 3 || len(impact.SuggestedVerification) < 5 {
+		t.Fatalf("humanized impact incomplete: %+v", impact)
 	}
 }
 

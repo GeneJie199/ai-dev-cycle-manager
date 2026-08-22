@@ -19,6 +19,7 @@ import (
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/app"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/git"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
+	"github.com/GeneJie199/ai-dev-cycle-manager/internal/store"
 )
 
 //go:embed static
@@ -68,6 +69,12 @@ func NewServer(a *app.App, logger *log.Logger) (*Server, error) {
 	s.mux.HandleFunc("POST /api/requirements/{id}/runs", s.handleRunVerification)
 	s.mux.HandleFunc("POST /api/verification-runs/{id}/stop", s.handleStopVerification)
 	s.mux.HandleFunc("GET /api/ai/providers", s.handleAIProviders)
+	s.mux.HandleFunc("POST /api/ai/providers", s.handleConfigureAIProvider)
+	s.mux.HandleFunc("DELETE /api/ai/providers/{id}", s.handleDeleteAIProvider)
+	s.mux.HandleFunc("POST /api/ai/providers/{id}/test", s.handleTestAIProvider)
+	s.mux.HandleFunc("POST /api/ai/request-preview", s.handleAIRequestPreview)
+	s.mux.HandleFunc("GET /api/requirements/{id}/plan", s.handleGetPlanningDocument)
+	s.mux.HandleFunc("PUT /api/requirements/{id}/plan", s.handleSavePlanningDocument)
 	s.mux.HandleFunc("POST /api/requirements/{id}/ai-plan", s.handleGenerateAIPlan)
 	s.mux.HandleFunc("POST /api/requirements/{id}/ai-plan/apply", s.handleApplyAIPlan)
 
@@ -79,6 +86,12 @@ func NewServer(a *app.App, logger *log.Logger) (*Server, error) {
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	s.mux.HandleFunc("POST /api/tasks/{id}/worktree", s.handleCreateTaskWorktree)
+	s.mux.HandleFunc("GET /api/tasks/{id}/handoffs", s.handleListTaskHandoffs)
+	s.mux.HandleFunc("POST /api/tasks/{id}/handoffs", s.handleCreateTaskHandoff)
+	s.mux.HandleFunc("POST /api/handoffs/{id}/accept", s.handleAcceptTaskHandoff)
+	s.mux.HandleFunc("GET /api/agent-adapters", s.handleListAgentAdapters)
+	s.mux.HandleFunc("POST /api/agent-adapters", s.handleConfigureAgentAdapter)
+	s.mux.HandleFunc("DELETE /api/agent-adapters/{id}", s.handleDeleteAgentAdapter)
 	s.mux.HandleFunc("GET /api/agent-sessions", s.handleListSessions)
 	s.mux.HandleFunc("POST /api/agent-sessions", s.handleStartSession)
 	s.mux.HandleFunc("POST /api/agent-sessions/{id}/stop", s.handleStopSession)
@@ -308,6 +321,7 @@ type requirementDetail struct {
 	Requirement models.Requirement           `json:"requirement"`
 	Criteria    []models.AcceptanceCriterion `json:"criteria"`
 	Tasks       []models.Task                `json:"tasks"`
+	Plan        *models.PlanningDocument     `json:"plan,omitempty"`
 }
 
 func (s *Server) handleGetRequirementDetail(w http.ResponseWriter, r *http.Request) {
@@ -327,7 +341,14 @@ func (s *Server) handleGetRequirementDetail(w http.ResponseWriter, r *http.Reque
 		s.fail(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, requirementDetail{Requirement: req, Criteria: criteria, Tasks: tasks})
+	var plan *models.PlanningDocument
+	if stored, planErr := s.app.GetPlanningDocument(r.Context(), id); planErr == nil {
+		plan = &stored
+	} else if !isNotFound(planErr) {
+		s.fail(w, planErr)
+		return
+	}
+	writeJSON(w, http.StatusOK, requirementDetail{Requirement: req, Criteria: criteria, Tasks: tasks, Plan: plan})
 }
 
 func (s *Server) handleListCriteria(w http.ResponseWriter, r *http.Request) {
@@ -422,8 +443,93 @@ func (s *Server) handleDeleteCriterion(w http.ResponseWriter, r *http.Request) {
 
 // --- AI-assisted planning ---
 
-func (s *Server) handleAIProviders(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, nonNil(s.app.AIProviders()))
+func (s *Server) handleAIProviders(w http.ResponseWriter, r *http.Request) {
+	providers, err := s.app.AIProviders(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(providers))
+}
+
+func (s *Server) handleConfigureAIProvider(w http.ResponseWriter, r *http.Request) {
+	var input app.AIProviderInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	provider, err := s.app.ConfigureAIProvider(r.Context(), input)
+	if err != nil {
+		if app.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, provider)
+}
+
+func (s *Server) handleDeleteAIProvider(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.DeleteAIProvider(r.Context(), r.PathValue("id")); err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleTestAIProvider(w http.ResponseWriter, r *http.Request) {
+	meta, err := s.app.TestAIProvider(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "meta": meta})
+}
+
+func (s *Server) handleAIRequestPreview(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Provider string `json:"provider"`
+		Input    string `json:"input"`
+	}
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	preview, err := s.app.AIRequestPreview(r.Context(), input.Provider, input.Input)
+	if err != nil {
+		if app.IsValidationError(err) {
+			writeError(w, http.StatusBadRequest, err.Error())
+		} else {
+			writeError(w, http.StatusBadGateway, err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, preview)
+}
+
+func (s *Server) handleGetPlanningDocument(w http.ResponseWriter, r *http.Request) {
+	document, err := s.app.GetPlanningDocument(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, document)
+}
+
+func (s *Server) handleSavePlanningDocument(w http.ResponseWriter, r *http.Request) {
+	var document models.PlanningDocument
+	if !decodeBody(w, r, &document) {
+		return
+	}
+	saved, err := s.app.SavePlanningDocument(r.Context(), r.PathValue("id"), document)
+	if err != nil {
+		if errors.Is(err, store.ErrPlanningRevisionConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			s.fail(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, saved)
 }
 
 func (s *Server) handleGenerateAIPlan(w http.ResponseWriter, r *http.Request) {
@@ -452,19 +558,30 @@ func (s *Server) handleGenerateAIPlan(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleApplyAIPlan(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Criteria []app.AIPlanCriterion `json:"criteria"`
-		Tasks    []app.AIPlanTask      `json:"tasks"`
+		Document *models.PlanningDocument `json:"document,omitempty"`
+		Criteria []app.AIPlanCriterion    `json:"criteria,omitempty"`
+		Tasks    []app.AIPlanTask         `json:"tasks,omitempty"`
 	}
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	applied, err := s.app.ApplyAIPlan(r.Context(), r.PathValue("id"), req.Criteria, req.Tasks)
+	var applied app.AppliedAIPlan
+	var err error
+	if req.Document != nil {
+		applied, err = s.app.ApplyPlanningDocument(r.Context(), r.PathValue("id"), *req.Document)
+	} else {
+		applied, err = s.app.ApplyAIPlan(r.Context(), r.PathValue("id"), req.Criteria, req.Tasks)
+	}
 	if err != nil {
 		if isNotFound(err) || strings.Contains(err.Error(), "requirement: sql") {
 			writeError(w, http.StatusNotFound, "requirement not found")
 			return
 		}
-		writeError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, store.ErrPlanningRevisionConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, err.Error())
+		}
 		return
 	}
 	writeJSON(w, http.StatusCreated, applied)
@@ -583,6 +700,81 @@ func (s *Server) handleCreateTaskWorktree(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"task": task, "worktree": worktree})
+}
+
+func (s *Server) handleListAgentAdapters(w http.ResponseWriter, r *http.Request) {
+	adapters, err := s.app.AgentAdapters(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(adapters))
+}
+
+func (s *Server) handleConfigureAgentAdapter(w http.ResponseWriter, r *http.Request) {
+	var adapter models.AgentAdapterConfig
+	if !decodeBody(w, r, &adapter) {
+		return
+	}
+	status, err := s.app.ConfigureAgentAdapter(r.Context(), adapter)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func (s *Server) handleDeleteAgentAdapter(w http.ResponseWriter, r *http.Request) {
+	if err := s.app.DeleteAgentAdapter(r.Context(), r.PathValue("id")); err != nil {
+		if strings.Contains(err.Error(), "running agent") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			s.fail(w, err)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListTaskHandoffs(w http.ResponseWriter, r *http.Request) {
+	handoffs, err := s.app.ListTaskHandoffs(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, nonNil(handoffs))
+}
+
+func (s *Server) handleCreateTaskHandoff(w http.ResponseWriter, r *http.Request) {
+	var input app.TaskHandoffInput
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	handoff, err := s.app.CreateTaskHandoff(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, handoff)
+}
+
+func (s *Server) handleAcceptTaskHandoff(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		SessionID string `json:"sessionId,omitempty"`
+	}
+	if !decodeBody(w, r, &input) {
+		return
+	}
+	handoff, err := s.app.AcceptTaskHandoff(r.Context(), r.PathValue("id"), input.SessionID)
+	if err != nil {
+		if strings.Contains(err.Error(), "already accepted") {
+			writeError(w, http.StatusConflict, err.Error())
+		} else {
+			s.fail(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, handoff)
 }
 
 // --- git ---

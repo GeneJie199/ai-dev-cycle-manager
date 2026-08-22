@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,13 +17,35 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
 )
 
 type ProviderStatus struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Available bool   `json:"available"`
-	Binary    string `json:"-"`
+	ID               string            `json:"id"`
+	Name             string            `json:"name"`
+	Kind             string            `json:"kind"`
+	Transport        string            `json:"transport"`
+	Available        bool              `json:"available"`
+	Configured       bool              `json:"configured"`
+	Enabled          bool              `json:"enabled"`
+	Reason           string            `json:"reason,omitempty"`
+	BaseURL          string            `json:"baseUrl,omitempty"`
+	Model            string            `json:"model,omitempty"`
+	APIPath          string            `json:"apiPath,omitempty"`
+	APIKeyHeader     string            `json:"apiKeyHeader,omitempty"`
+	APIKeyPrefix     string            `json:"apiKeyPrefix,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	TimeoutSeconds   int               `json:"timeoutSeconds,omitempty"`
+	SecretSource     string            `json:"secretSource,omitempty"`
+	RequiresSecret   bool              `json:"requiresSecret"`
+	SecretConfigured bool              `json:"secretConfigured"`
+	Binary           string            `json:"-"`
+}
+
+type ProviderConfigStore interface {
+	GetAIProvider(context.Context, string) (models.AIProviderConfig, error)
+	ListAIProviders(context.Context) ([]models.AIProviderConfig, error)
 }
 
 type GenerationMeta struct {
@@ -39,6 +62,8 @@ type Service struct {
 	Timeout        time.Duration
 	MaxInputChars  int
 	MaxOutputBytes int
+	Configs        ProviderConfigStore
+	Secrets        SecretStore
 	mu             sync.Mutex
 	slots          chan struct{}
 }
@@ -56,9 +81,56 @@ func (s *Service) Providers() []ProviderStatus {
 	out := make([]ProviderStatus, 0, len(definitions))
 	for _, definition := range definitions {
 		path, err := exec.LookPath(definition.binary)
-		out = append(out, ProviderStatus{ID: definition.id, Name: definition.name, Available: err == nil, Binary: path})
+		status := ProviderStatus{ID: definition.id, Name: definition.name, Kind: "cli", Transport: "cli", Available: err == nil, Configured: err == nil, Enabled: true, Binary: path}
+		if err != nil {
+			status.Reason = definition.binary + " executable not found"
+		}
+		out = append(out, status)
 	}
 	return out
+}
+
+func (s *Service) AllProviders(ctx context.Context) ([]ProviderStatus, error) {
+	providers := s.Providers()
+	if s.Configs == nil {
+		return providers, nil
+	}
+	configured, err := s.Configs.ListAIProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, config := range configured {
+		status := ProviderStatus{ID: config.ID, Name: config.Name, Kind: config.Kind, Transport: "api", Configured: true, Enabled: config.Enabled, BaseURL: config.BaseURL, Model: config.Model, APIPath: config.APIPath, APIKeyHeader: config.APIKeyHeader, APIKeyPrefix: config.APIKeyPrefix, Headers: config.Headers, TimeoutSeconds: config.TimeoutSeconds, RequiresSecret: ProviderRequiresSecret(config)}
+		if strings.HasPrefix(config.SecretRef, "env:") {
+			status.SecretSource = "environment"
+		} else if strings.HasPrefix(config.SecretRef, "keyring:") {
+			status.SecretSource = "keyring"
+		}
+		if !config.Enabled {
+			status.Reason = "provider is disabled"
+			providers = append(providers, status)
+			continue
+		}
+		if _, err = NormalizeProviderConfig(config); err != nil {
+			status.Reason = err.Error()
+			providers = append(providers, status)
+			continue
+		}
+		status.SecretConfigured = !status.RequiresSecret
+		if config.SecretRef != "" && s.Secrets != nil {
+			if secret, secretErr := s.Secrets.Get(ctx, config.SecretRef); secretErr == nil && secret != "" {
+				status.SecretConfigured = true
+			} else if secretErr != nil {
+				status.Reason = secretErr.Error()
+			}
+		}
+		status.Available = status.SecretConfigured
+		if !status.Available && status.Reason == "" {
+			status.Reason = "provider credential is not configured"
+		}
+		providers = append(providers, status)
+	}
+	return providers, nil
 }
 
 func (s *Service) GenerateJSON(ctx context.Context, provider, purpose, prompt string, result any) (GenerationMeta, error) {
@@ -88,6 +160,23 @@ func (s *Service) GenerateJSON(ctx context.Context, provider, purpose, prompt st
 	inputChars := utf8.RuneCountInString(prompt)
 	if inputChars > maxInput {
 		return GenerationMeta{}, fmt.Errorf("AI %s input exceeds %d characters", purpose, maxInput)
+	}
+	if s.Configs != nil {
+		config, configErr := s.Configs.GetAIProvider(ctx, provider)
+		if configErr == nil {
+			started := time.Now()
+			output, err := s.generateHTTP(ctx, config, prompt, maxOutput)
+			if err != nil {
+				return GenerationMeta{}, err
+			}
+			if err = ExtractJSONObject(output, result); err != nil {
+				return GenerationMeta{}, fmt.Errorf("parse %s output: %w", provider, err)
+			}
+			return GenerationMeta{Provider: provider, GeneratedAt: time.Now().UTC().Format(time.RFC3339), RedactionCount: redactions, InputChars: inputChars, OutputBytes: len(output), DurationMilliseconds: time.Since(started).Milliseconds(), CostStatus: "not_reported_by_provider"}, nil
+		}
+		if !errors.Is(configErr, sql.ErrNoRows) {
+			return GenerationMeta{}, fmt.Errorf("load AI provider: %w", configErr)
+		}
 	}
 	binary, args, err := providerCommand(provider, prompt)
 	if err != nil {

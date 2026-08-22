@@ -3,273 +3,153 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17211e">
 <title>DevCycle 工作台</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-
 <header class="topbar">
-  <div class="product-brand"><span class="suite-kicker">AI DEVOPS OPEN SUITE</span><div><strong class="product-name">DevCycle</strong><span class="product-subtitle">交付工作台</span></div></div>
-  <div class="topbar-actions"><span class="topbar-note">需求 → 验收 → 任务 → 验证 → 发布</span><details class="suite-switcher"><summary>模块</summary><div class="suite-menu"><a data-suite="devcycle" class="current">DevCycle<span>研发交付</span></a><a data-suite="infrascout">InfraScout<span>基础设施发现</span></a><a data-suite="fleetscope">FleetScope<span>原生监控</span></a><a data-suite="releaseguard">ReleaseGuard<span>发布门禁</span></a></div></details></div>
+  <a class="product-brand" href="#/workbench" aria-label="DevCycle 工作台">
+    <span class="brand-mark"><i data-lucide="workflow"></i></span>
+    <span><small>AI DEVOPS OPEN SUITE</small><strong>DevCycle</strong></span>
+  </a>
+  <div class="topbar-actions">
+    <span class="privacy-state"><i data-lucide="shield-check"></i> 本地运行</span>
+    <details class="suite-switcher">
+      <summary><i data-lucide="blocks"></i><span>套件模块</span></summary>
+      <div class="suite-menu">
+        <a data-suite="devcycle" class="current"><i data-lucide="workflow"></i><span><b>DevCycle</b><small>研发交付</small></span></a>
+        <a data-suite="infrascout"><i data-lucide="scan-search"></i><span><b>InfraScout</b><small>基础设施发现</small></span></a>
+        <a data-suite="fleetscope"><i data-lucide="activity"></i><span><b>FleetScope</b><small>舰队监控</small></span></a>
+        <a data-suite="releaseguard"><i data-lucide="shield-check"></i><span><b>ReleaseGuard</b><small>发布门禁</small></span></a>
+      </div>
+    </details>
+  </div>
 </header>
 
 <nav id="mainnav" aria-label="主导航">
-  <a href="#/workbench" data-nav="workbench">工作台</a>
-  <a href="#/git" data-nav="git">Git 工具</a>
-  <a href="#/repos" data-nav="repos">仓库</a>
+  <a href="#/workbench" data-nav="workbench"><i data-lucide="layout-dashboard"></i><span>工作台</span></a>
+  <a href="#/activity" data-nav="activity"><i data-lucide="radio"></i><span>活动</span><span id="live-count" class="nav-count hidden">0</span></a>
+  <a href="#/git" data-nav="git"><i data-lucide="git-branch"></i><span>代码</span></a>
+  <a href="#/settings" data-nav="settings"><i data-lucide="settings-2"></i><span>设置</span></a>
 </nav>
 
 <div id="toast" class="hidden" role="status" aria-live="polite"></div>
 
 <main>
-  <!-- 工作台：以单一需求上下文为核心 -->
   <section id="view-workbench" class="view active" aria-label="需求工作台">
     <div class="wb-layout">
       <aside class="req-panel" aria-label="需求列表">
         <div class="aside-head"><div><strong>交付需求</strong><span id="req-count">0 项</span></div></div>
-        <details class="composer">
-          <summary>新建需求</summary>
-        <form id="form-create-req">
-          <label for="req-title">标题</label>
-          <input id="req-title" name="title" required placeholder="一句话说清楚要做什么">
-          <label for="req-desc">描述（可选）</label>
-          <textarea id="req-desc" name="description" rows="2" placeholder="背景、约束、期望结果"></textarea>
-          <div class="actions">
-            <button type="submit" class="btn">创建需求</button>
-          </div>
+        <form id="form-create-req" class="intent-composer">
+          <label for="req-intent">你想让 AI 构建什么？</label>
+          <textarea id="req-intent" name="intent" rows="4" minlength="2" maxlength="20000" required placeholder="例如：给后台增加手机号验证码登录，同时保留账号密码登录"></textarea>
+          <details>
+            <summary>手动设置标题与背景</summary>
+            <label for="req-title">需求标题<input id="req-title" name="title" maxlength="300" placeholder="默认取意图的第一句话"></label>
+            <label for="req-desc">背景与约束<textarea id="req-desc" name="description" rows="3" maxlength="20000"></textarea></label>
+          </details>
+          <button type="submit" class="btn intent-submit"><i data-lucide="arrow-right"></i>创建需求</button>
         </form>
-        </details>
-        <div id="req-list" class="list"></div>
+        <div id="req-list" class="list req-list"></div>
       </aside>
 
       <div class="req-detail">
         <div id="req-empty" class="empty-start">
-          <span class="empty-start-mark" aria-hidden="true">+</span>
-          <div><strong>从一个可验收目标开始</strong><p>先写清楚目标，再把验收、任务、验证证据和发布候选收进同一条交付链路。</p></div>
-          <button id="start-first-requirement" class="btn" type="button">新建第一个需求</button>
+          <span class="empty-start-mark"><i data-lucide="file-plus-2"></i></span>
+          <div><strong>从一个明确目标开始</strong><p>需求、任务、代码、验证与发布记录会留在同一条交付链路里。</p></div>
+          <button id="start-first-requirement" class="btn" type="button"><i data-lucide="plus"></i>新建第一个需求</button>
         </div>
 
         <div id="req-content" class="hidden">
+          <button id="mobile-back" class="mobile-back" type="button"><i data-lucide="arrow-left"></i>全部需求</button>
           <div id="req-header"></div>
-          <div id="readiness-band" aria-label="发布就绪概览"></div>
+          <div id="readiness-band"></div>
 
-          <nav id="workbench-nav" class="section-nav" aria-label="需求工作区导航">
-            <a href="#" data-wb-mode="plan">规划与执行</a>
-            <a href="#" data-wb-mode="verify">验证与证据</a>
-            <a href="#" data-wb-mode="release">报告与候选</a>
+          <nav id="workbench-nav" class="workflow-steps" aria-label="交付阶段">
+            <a href="#" data-wb-mode="intent"><span>1</span><b>意图与计划</b></a>
+            <a href="#" data-wb-mode="acceptance"><span>2</span><b>验收标准</b></a>
+            <a href="#" data-wb-mode="execute"><span>3</span><b>任务执行</b></a>
+            <a href="#" data-wb-mode="verify"><span>4</span><b>验证证据</b></a>
+            <a href="#" data-wb-mode="release"><span>5</span><b>报告发布</b></a>
           </nav>
 
-          <section class="block" data-wb-panel="plan" aria-label="AI 辅助规划">
-            <div class="section-heading"><div><h3>AI 辅助规划</h3><p>生成可审阅建议；只有勾选并应用的条目才会写入。</p></div><span class="status-dot" id="ai-provider-status">检测中</span></div>
-            <form id="form-ai-plan" class="tool-surface">
+          <section class="block" data-wb-panel="intent" aria-label="AI 规划">
+            <div class="section-heading"><div><span class="eyebrow ai">AI 可选</span><h3>生成交付计划</h3></div><span class="status-dot" id="ai-provider-status">检测中</span></div>
+            <form id="form-ai-plan" class="tool-surface ai-surface">
               <div class="grid-2">
                 <label for="ai-provider">模型提供方<select id="ai-provider" name="provider" required></select></label>
-                <label for="ai-context">本次补充约束<input id="ai-context" name="additionalContext" maxlength="8000" placeholder="例如：必须兼容 Windows Server 2022"></label>
+                <label for="ai-context">补充约束<input id="ai-context" name="additionalContext" maxlength="8000" placeholder="平台、兼容性、边界或交付期限"></label>
               </div>
-              <div class="actions"><button type="submit" class="btn">生成规划建议</button><span class="form-note">发送前自动脱敏；模型在空临时目录中以只读方式运行</span></div>
+              <div class="actions"><button type="submit" class="btn ai-btn"><i data-lucide="sparkles"></i>生成计划</button><a href="#/settings/ai" class="text-link">管理模型</a></div>
             </form>
-            <div id="ai-plan-preview" class="ai-preview"></div>
+            <div id="ai-plan-preview"></div>
           </section>
 
-          <section class="block" data-wb-panel="plan" aria-label="验收标准">
-            <h3>验收标准 <span class="hint" title="怎样算做完：每条都是可核对的小条件；标记通过必须有证据">?</span></h3>
-            <details class="composer">
-              <summary>添加验收标准</summary>
-            <form id="form-create-criterion">
-              <label for="criterion-desc">验收条件</label>
-              <input id="criterion-desc" name="description" required placeholder="例如：登录接口返回 200 且含 token">
-              <div class="actions">
-                <button type="submit" class="btn">添加标准</button>
-              </div>
-            </form>
-            </details>
+          <section class="block" data-wb-panel="intent" aria-label="交付计划">
+            <div class="section-heading"><div><h3>交付计划</h3><p id="plan-state">尚未建立</p></div><div class="actions compact"><button id="btn-new-plan" class="btn ghost" type="button"><i data-lucide="file-plus-2"></i>手动建立</button><button id="btn-save-plan" class="btn" type="button" disabled><i data-lucide="save"></i>保存计划</button><button id="btn-apply-plan" class="btn strong" type="button" disabled><i data-lucide="list-checks"></i>拆为任务</button></div></div>
+            <div id="plan-editor" class="plan-editor"></div>
+          </section>
+
+          <section class="block" data-wb-panel="acceptance" aria-label="验收标准">
+            <div class="section-heading"><div><h3>验收标准</h3><p>每一条都应有可核验结果。</p></div><button class="btn ghost" type="button" data-open-composer="criterion"><i data-lucide="plus"></i>添加标准</button></div>
+            <details class="composer" data-composer="criterion"><summary>添加验收标准</summary><form id="form-create-criterion"><label for="criterion-desc">验收条件<input id="criterion-desc" name="description" required minlength="5" maxlength="2000" placeholder="例如：账号密码登录仍可正常使用"></label><div class="actions"><button type="submit" class="btn">添加标准</button></div></form></details>
             <div id="criteria-list" class="list"></div>
           </section>
 
-          <section class="block" data-wb-panel="plan" aria-label="任务与 Agent">
-            <h3>任务与 Agent <span class="hint" title="需求拆出来的可执行条目；可在任务上创建隔离工作区并启动 codex / kimi / claude 会话">?</span></h3>
-            <details class="composer">
-              <summary>新建任务</summary>
-            <form id="form-create-task">
-              <label for="task-title">任务标题</label>
-              <input id="task-title" name="title" required placeholder="具体要做的一件事">
-              <label for="task-desc">描述（可选）</label>
-              <textarea id="task-desc" name="description" rows="2" placeholder="补充说明"></textarea>
-              <div class="actions">
-                <button type="submit" class="btn">新建任务</button>
-              </div>
-            </form>
-            </details>
+          <section class="block" data-wb-panel="execute" aria-label="任务与代理">
+            <div class="section-heading"><div><h3>任务执行</h3><p>任务按依赖顺序推进，Agent 只在隔离工作区运行。</p></div><button class="btn ghost" type="button" data-open-composer="task"><i data-lucide="plus"></i>新建任务</button></div>
+            <details class="composer" data-composer="task"><summary>新建任务</summary><form id="form-create-task"><label for="task-title">任务标题<input id="task-title" name="title" required maxlength="300"></label><label for="task-desc">任务描述<textarea id="task-desc" name="description" rows="3" maxlength="8000"></textarea></label><div class="actions"><button type="submit" class="btn">新建任务</button></div></form></details>
             <div id="task-list" class="list"></div>
           </section>
 
           <section class="block" data-wb-panel="verify" aria-label="验证运行">
-            <h3>验证运行 <span class="hint" title="对当前需求执行确定性的构建/测试/检查命令，结果自动沉淀为证据">?</span></h3>
-            <details class="composer">
-              <summary>运行一项验证</summary>
-            <form id="form-run">
-              <div class="grid-2">
-                <div>
-                  <label for="run-name">名称</label>
-                  <input id="run-name" name="name" required placeholder="例如：单元测试">
-                </div>
-                <div>
-                  <label for="run-criterion">关联验收标准（可选）</label>
-                  <select id="run-criterion" name="criterionId"></select>
-                </div>
-              </div>
-              <label for="run-command">命令</label>
-              <input id="run-command" name="command" required placeholder="例如：go test ./... 或 npm test">
-              <div class="grid-2">
-                <div>
-                  <label for="run-workdir">工作目录（可选，默认服务进程目录）</label>
-                  <input id="run-workdir" name="workingDir" placeholder="留空则使用服务进程目录">
-                </div>
-                <div>
-                  <label for="run-timeout">超时秒数（可选，默认 600）</label>
-                  <input id="run-timeout" name="timeoutSeconds" type="number" min="1" max="1800" placeholder="600">
-                </div>
-              </div>
-              <div class="actions">
-                <button type="submit" class="btn">运行验证</button>
-                <span class="form-note">运行期间请稍候，命令最长执行 30 分钟</span>
-              </div>
-            </form>
-            </details>
+            <div class="section-heading"><div><h3>验证运行</h3><p>命令结果会自动登记为证据。</p></div><button class="btn ghost" type="button" data-open-composer="run"><i data-lucide="play"></i>运行验证</button></div>
+            <details class="composer" data-composer="run"><summary>运行一项验证</summary><form id="form-run"><div class="grid-2"><label for="run-name">名称<input id="run-name" name="name" required placeholder="单元测试"></label><label for="run-criterion">关联验收标准<select id="run-criterion" name="criterionId"></select></label></div><label for="run-command">命令<input id="run-command" name="command" required placeholder="go test ./..."></label><details class="advanced"><summary>运行设置</summary><div class="grid-2"><label for="run-workdir">工作目录<input id="run-workdir" name="workingDir" placeholder="默认服务进程目录"></label><label for="run-timeout">超时秒数<input id="run-timeout" name="timeoutSeconds" type="number" min="1" max="1800" placeholder="600"></label></div></details><div class="actions"><button type="submit" class="btn"><i data-lucide="play"></i>开始运行</button></div></form></details>
             <div id="run-list" class="list"></div>
           </section>
 
           <section class="block" data-wb-panel="verify" aria-label="证据">
-            <h3>证据 <span class="hint" title="证明验收标准已满足的材料：测试、构建、截图、日志、人工确认等">?</span></h3>
-            <details class="composer">
-              <summary>登记人工证据</summary>
-            <form id="form-evidence">
-              <div class="grid-2">
-                <div>
-                  <label for="ev-kind">类型</label>
-                  <select id="ev-kind" name="kind">
-                    <option value="manual">人工确认</option>
-                    <option value="test">测试</option>
-                    <option value="build">构建</option>
-                    <option value="lint">静态检查</option>
-                    <option value="screenshot">截图</option>
-                    <option value="log">日志</option>
-                    <option value="commit">提交</option>
-                    <option value="report">报告</option>
-                  </select>
-                </div>
-                <div>
-                  <label for="ev-status">结论</label>
-                  <select id="ev-status" name="status">
-                    <option value="passed">通过</option>
-                    <option value="failed">未通过</option>
-                    <option value="informational">仅供参考</option>
-                  </select>
-                </div>
-              </div>
-              <label for="ev-title">标题</label>
-              <input id="ev-title" name="title" required placeholder="例如：手工回归登录流程通过">
-              <div class="grid-2">
-                <div>
-                  <label for="ev-criterion">关联验收标准（可选）</label>
-                  <select id="ev-criterion" name="criterionId"></select>
-                </div>
-                <div>
-                  <label for="ev-uri">外部链接（可选）</label>
-                  <input id="ev-uri" name="uri" placeholder="例如 CI 记录或截图地址">
-                </div>
-              </div>
-              <label for="ev-inline">说明（可选）</label>
-              <textarea id="ev-inline" name="inline" rows="2" placeholder="关键输出、结论或备注"></textarea>
-              <div class="actions">
-                <button type="submit" class="btn">登记证据</button>
-              </div>
-            </form>
-            </details>
+            <div class="section-heading"><div><h3>验收证据</h3><p>自动验证与人工确认按时间保留。</p></div><button class="btn ghost" type="button" data-open-composer="evidence"><i data-lucide="paperclip"></i>登记证据</button></div>
+            <details class="composer" data-composer="evidence"><summary>登记证据</summary><form id="form-evidence"><div class="grid-2"><label for="ev-kind">类型<select id="ev-kind" name="kind"><option value="human_confirmation">人工确认</option><option value="test">测试</option><option value="code">代码</option><option value="commit">提交</option><option value="screenshot">截图</option><option value="command">命令</option><option value="http_response">HTTP 响应</option><option value="artifact">制品</option></select></label><label for="ev-status">结论<select id="ev-status" name="status"><option value="passed">通过</option><option value="failed">未通过</option><option value="informational">仅供参考</option></select></label></div><label for="ev-title">标题<input id="ev-title" name="title" required></label><div class="grid-2"><label for="ev-criterion">关联验收标准<select id="ev-criterion" name="criterionId"></select></label><label for="ev-uri">外部链接<input id="ev-uri" name="uri" placeholder="https://"></label></div><label for="ev-inline">结果说明<textarea id="ev-inline" name="inline" rows="3"></textarea></label><div class="actions"><button type="submit" class="btn">登记证据</button></div></form></details>
             <div id="evidence-list" class="list"></div>
           </section>
 
           <section class="block" data-wb-panel="release" aria-label="报告与发布">
-            <h3>报告与发布候选 <span class="hint" title="把当前需求的验收、任务、证据与验证运行汇成结构化报告或 lifecycle-spec 风格的发布候选">?</span></h3>
-            <div class="card">
-              <div class="actions">
-                <button id="btn-load-report" type="button" class="btn">生成开发报告</button>
-                <button id="btn-download-report" type="button" class="btn ghost" disabled>下载报告 JSON</button>
-                <button id="btn-load-rc" type="button" class="btn">生成发布候选</button>
-                <button id="btn-download-rc" type="button" class="btn ghost" disabled>下载候选 JSON</button>
-              </div>
-            </div>
-            <div id="report-output"></div>
-            <div id="rc-output"></div>
+            <div class="section-heading"><div><h3>报告与发布候选</h3><p>汇总需求、来源、验证和证据。</p></div></div>
+            <div class="release-actions"><button id="btn-load-report" type="button" class="btn"><i data-lucide="file-chart-column"></i>生成开发报告</button><button id="btn-download-report" type="button" class="icon-btn" title="下载报告 JSON" aria-label="下载报告 JSON" disabled><i data-lucide="download"></i></button><button id="btn-load-rc" type="button" class="btn strong"><i data-lucide="package-check"></i>生成发布候选</button><button id="btn-download-rc" type="button" class="icon-btn" title="下载候选 JSON" aria-label="下载候选 JSON" disabled><i data-lucide="download"></i></button></div>
+            <div id="report-output"></div><div id="rc-output"></div>
           </section>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- Git 工具 -->
-  <section id="view-git" class="view" aria-label="Git 工具">
-    <h2>Git 状态 <span class="hint" title="所选仓库当前改到哪了：分支、未提交文件、最近提交、改动摘要与影响分析">?</span></h2>
-    <div class="card">
-      <label for="git-repo-select">选择仓库</label>
-      <select id="git-repo-select"></select>
-	  <div class="grid-2 git-range">
-		<label for="git-from">起点（可选）<input id="git-from" placeholder="例如 HEAD、main、v1.2.0"></label>
-		<label for="git-to">终点（可选）<input id="git-to" placeholder="留空则比较工作区"></label>
-	  </div>
-      <div class="row">
-        <label class="check"><input type="checkbox" id="git-stat" checked> 只看摘要(--stat)</label>
-        <label class="check"><input type="checkbox" id="git-staged"> 只看已暂存(--staged)</label>
-        <button id="btn-refresh-git" type="button" class="btn ghost">刷新</button>
-      </div>
-    </div>
-    <div id="git-status" class="list"></div>
-	<div class="section-heading"><div><h3>文件级改动</h3><p id="git-diff-summary">等待读取</p></div></div>
-	<div id="git-files" class="diff-files"></div>
-	<details class="raw-diff"><summary>查看原始 Diff</summary><pre id="git-diff" class="code" tabindex="0"></pre></details>
-    <h3>分支</h3>
-    <div id="git-branches" class="list"></div>
-    <h3>最近提交</h3>
-    <div id="git-log" class="list"></div>
-	<div class="section-heading"><div><h3>影响分析</h3><p>规则分析提供确定性基线，AI 解释只基于上方文件级元数据。</p></div></div>
-	<div class="tool-surface">
-      <div class="actions">
-        <button id="btn-impact" type="button" class="btn">分析改动影响</button>
-		<label class="inline-select">模型<select id="git-ai-provider"></select></label>
-		<button id="btn-explain-diff" type="button" class="btn ghost">AI 解释改动</button>
-      </div>
-    </div>
-    <div id="git-impact"></div>
-	<div id="git-ai-explanation"></div>
+  <section id="view-activity" class="view" aria-label="活动中心">
+    <div class="page-heading"><div><span class="eyebrow">实时状态</span><h2>活动中心</h2></div><button id="btn-refresh-activity" class="icon-btn" type="button" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button></div>
+    <div id="activity-summary" class="metric-strip"></div><div class="activity-grid"><section><h3>Agent 会话</h3><div id="activity-sessions" class="list"></div></section><section><h3>验证运行</h3><div id="activity-runs" class="list"></div></section></div>
   </section>
 
-  <!-- 仓库管理 -->
-  <section id="view-repos" class="view" aria-label="仓库管理">
-    <h2>仓库 <span class="hint" title="本地 Git 仓库的注册表；导入后才能查看状态、改动与影响分析">?</span></h2>
-    <form id="form-import-repo" class="card">
-      <label for="repo-path">仓库路径</label>
-      <input id="repo-path" name="path" required placeholder="例如 C:\work\my-repo 或 /home/me/my-repo">
-      <div class="actions">
-        <button type="submit" class="btn">导入仓库</button>
-      </div>
-    </form>
-    <div id="repo-list" class="list"></div>
+  <section id="view-git" class="view" aria-label="代码变更">
+    <div class="page-heading"><div><span class="eyebrow">Humanized Git</span><h2>代码变更</h2></div><button id="btn-refresh-git" type="button" class="icon-btn" title="刷新" aria-label="刷新"><i data-lucide="refresh-cw"></i></button></div>
+    <div class="toolbar-band"><label for="git-repo-select">仓库<select id="git-repo-select"></select></label><label for="git-from">起点<input id="git-from" placeholder="HEAD 或 main"></label><label for="git-to">终点<input id="git-to" placeholder="留空比较工作区"></label><label class="check"><input type="checkbox" id="git-staged">仅已暂存</label></div>
+    <div id="git-status" class="list"></div><div class="section-heading"><div><h3>文件级改动</h3><p id="git-diff-summary">等待读取</p></div></div><div id="git-files" class="diff-files"></div>
+    <div class="git-analysis-grid"><section><div class="section-heading"><div><h3>影响分析</h3></div><button id="btn-impact" type="button" class="btn"><i data-lucide="scan-search"></i>分析影响</button></div><div id="git-impact"></div></section><section><div class="section-heading"><div><h3>AI 评审</h3></div><div class="actions compact"><select id="git-ai-provider" aria-label="AI 评审模型"></select><button id="btn-explain-diff" type="button" class="btn ai-btn"><i data-lucide="sparkles"></i>解释改动</button></div></div><div id="git-ai-explanation"></div></section></div>
+    <details class="raw-diff"><summary><i data-lucide="code-2"></i>查看原始 Diff</summary><pre id="git-diff" class="code" tabindex="0"></pre></details><div class="split-section"><section><h3>分支</h3><div id="git-branches" class="list"></div></section><section><h3>最近提交</h3><div id="git-log" class="list"></div></section></div>
+  </section>
+
+  <section id="view-settings" class="view" aria-label="设置">
+    <div class="page-heading"><div><span class="eyebrow">本地配置</span><h2>设置</h2></div></div>
+    <nav class="settings-nav"><a href="#/settings/ai" data-settings-tab="ai">AI 模型</a><a href="#/settings/agents" data-settings-tab="agents">Agent 适配器</a><a href="#/settings/repos" data-settings-tab="repos">仓库</a></nav>
+    <section data-settings-panel="ai"><div class="section-heading"><div><h3>AI 模型提供方</h3><p>凭据仅保存到系统凭据库或环境变量。</p></div><button class="btn" type="button" data-open-composer="provider"><i data-lucide="plus"></i>添加 API</button></div><div id="provider-list" class="provider-grid"></div><details class="composer settings-composer" data-composer="provider"><summary>配置 AI API</summary><form id="form-ai-provider"><div class="grid-3"><label>ID<input name="id" required pattern="[a-z][a-z0-9._-]{1,63}"></label><label>名称<input name="name" required></label><label>协议<select name="kind"><option value="openai_compatible">OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option><option value="local_openai">本地 OpenAI / Ollama</option><option value="custom_openai">自定义 OpenAI</option></select></label></div><div class="grid-2"><label>服务地址<input name="baseUrl" placeholder="留空使用协议默认值"></label><label>模型<input name="model" required></label></div><div class="grid-2"><label>API Key<input name="secret" type="password" autocomplete="new-password"></label><label>或环境变量<input name="secretEnvironment" placeholder="例如 OPENAI_API_KEY"></label></div><details class="advanced"><summary>高级设置</summary><div class="grid-3"><label>API 路径<input name="apiPath"></label><label>凭据 Header<input name="apiKeyHeader"></label><label>凭据前缀<input name="apiKeyPrefix" placeholder="Bearer"></label></div><label>超时秒数<input name="timeoutSeconds" type="number" min="5" max="600" value="120"></label></details><label class="toggle"><input name="enabled" type="checkbox" checked><span>启用提供方</span></label><div class="actions"><button class="btn" type="submit">保存配置</button><button class="btn ghost" type="reset">清空</button></div></form></details></section>
+    <section data-settings-panel="agents"><div class="section-heading"><div><h3>Agent 适配器</h3><p>命令以参数数组直接执行，不经过 Shell。</p></div><button class="btn" type="button" data-open-composer="adapter"><i data-lucide="plus"></i>添加适配器</button></div><div id="adapter-list" class="provider-grid"></div><details class="composer settings-composer" data-composer="adapter"><summary>配置自定义适配器</summary><form id="form-agent-adapter"><div class="grid-2"><label>ID<input name="id" required pattern="[a-z][a-z0-9._-]{1,63}"></label><label>名称<input name="name" required></label></div><label>说明<input name="description" maxlength="500"></label><label>可执行程序<input name="command" required placeholder="命令名称或绝对路径"></label><label>参数（每行一个，必须包含一次 {{prompt}}）<textarea name="args" rows="4" required>run&#10;{{prompt}}</textarea></label><label>能力（每行一个）<textarea name="capabilities" rows="2">code_editing&#10;non_interactive&#10;worktree</textarea></label><label class="toggle"><input name="enabled" type="checkbox" checked><span>启用适配器</span></label><div class="actions"><button class="btn" type="submit">保存适配器</button></div></form></details></section>
+    <section data-settings-panel="repos"><div class="section-heading"><div><h3>本地仓库</h3><p>登记路径不会修改仓库内容。</p></div></div><form id="form-import-repo" class="toolbar-band"><label for="repo-path">仓库路径<input id="repo-path" name="path" required placeholder="C:\work\project 或 /home/me/project"></label><button type="submit" class="btn"><i data-lucide="folder-plus"></i>导入仓库</button></form><div id="repo-list" class="list"></div></section>
   </section>
 </main>
 
-<dialog id="confirm-dialog">
-  <form method="dialog" class="confirm-card">
-    <div class="confirm-head"><h2 id="confirm-title">确认操作</h2><button value="cancel" class="icon-btn" aria-label="关闭">×</button></div>
-    <p id="confirm-message"></p>
-    <div class="actions confirm-actions"><button value="cancel" class="btn ghost">取消</button><button id="confirm-submit" value="confirm" class="btn danger-fill">确认</button></div>
-  </form>
-</dialog>
-
-<footer>
-  <span>本页面仅监听本机（loopback），数据保存在本地 SQLite。</span>
-</footer>
-
-<script src="/suite.js"></script>
-<script src="/app.js"></script>
+<dialog id="confirm-dialog"><form method="dialog" class="dialog-card"><header><h2 id="confirm-title">确认操作</h2><button value="cancel" class="icon-btn" aria-label="关闭"><i data-lucide="x"></i></button></header><p id="confirm-message"></p><footer><button value="cancel" class="btn ghost">取消</button><button id="confirm-submit" value="confirm" class="btn danger-fill">确认</button></footer></form></dialog>
+<dialog id="ai-request-dialog"><form method="dialog" class="dialog-card wide"><header><div><span class="eyebrow ai">发送前检查</span><h2>AI 请求预览</h2></div><button value="cancel" class="icon-btn" aria-label="关闭"><i data-lucide="x"></i></button></header><div id="ai-request-preview"></div><footer><button value="cancel" class="btn ghost">取消</button><button value="confirm" class="btn ai-btn"><i data-lucide="send"></i>确认发送</button></footer></form></dialog>
+<footer class="app-footer"><span><i data-lucide="lock-keyhole"></i>仅监听本机，数据保存于本地 SQLite</span><span>DevCycle v1</span></footer>
+<script src="/vendor/lucide.min.js"></script><script src="/suite.js"></script><script src="/app.js"></script>
 </body>
 </html>

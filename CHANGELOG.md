@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0 - 2026-08-22
+
+- Add the editable `devcycle.planning-document/v1` contract with scope, assumptions, questions, criteria, test cases, strategy, ordered tasks, dependencies, risks, rollback concerns, candidate notes, durable revisions, and atomic application.
+- Add configurable OpenAI-compatible, Anthropic, Gemini, local OpenAI/Ollama, and custom OpenAI providers alongside existing local CLI planning, with request previews, redaction, connection tests, bounded responses, HTTPS enforcement, and OS-keyring or environment-backed credentials.
+- Add Codex, Claude Code, Gemini CLI, Kimi Code, and OpenCode adapters plus safe custom executable/argv adapters, availability checks, durable task handoffs, acceptance, changed-file context, and secret-safe logs.
+- Expand Evidence to canonical code, commit, test, screenshot, command, HTTP response, artifact, and human-confirmation kinds while preserving legacy aliases.
+- Replace the legacy workbench with a responsive five-stage delivery flow, global activity view, complete provider/adapter settings, offline Lucide icons, AI request confirmation, and polished empty/loading/error/danger states.
+- Expand Humanized Git with added/modified/deleted/renamed classification, user/API/database/configuration/security impact, risk reasons, suggested verification, structured files, and a real raw patch view.
+- Add schema-v3 migration coverage, revision-conflict tests, protocol fixtures, adapter/handoff tests, redaction tests, evidence ordering consistency, static product-surface checks, and desktop/mobile browser verification.
+
 ## 0.3.2 - 2026-08-13
 
 - Add an actionable first-run workbench that opens and focuses the first requirement form instead of leaving a passive empty canvas.

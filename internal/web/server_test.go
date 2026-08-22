@@ -100,7 +100,12 @@ func TestStaticIndex(t *testing.T) {
 	if !bytes.Contains(buf.Bytes(), []byte("DevCycle")) {
 		t.Fatal("index page missing title")
 	}
-	for _, asset := range []string{"/app.js", "/style.css", "/suite.js"} {
+	for _, marker := range []string{"form-create-req", "plan-editor", "provider-list", "adapter-list", "view-activity", "view-git"} {
+		if !bytes.Contains(buf.Bytes(), []byte(marker)) {
+			t.Fatalf("index page missing product surface %q", marker)
+		}
+	}
+	for _, asset := range []string{"/app.js", "/style.css", "/suite.js", "/vendor/lucide.min.js", "/vendor/LUCIDE_LICENSE.txt"} {
 		res, err := http.Get(ts.URL + asset)
 		if err != nil {
 			t.Fatal(err)
@@ -110,6 +115,39 @@ func TestStaticIndex(t *testing.T) {
 			t.Fatalf("GET %s: status=%d", asset, res.StatusCode)
 		}
 	}
+}
+
+func TestAgentAdapterAndHandoffAPI(t *testing.T) {
+	ts := newTestServer(t)
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := doJSON(t, http.MethodPost, ts.URL+"/api/agent-adapters", map[string]any{"id": "test-agent", "name": "Test Agent", "command": executable, "args": []string{"{{prompt}}"}, "capabilities": []string{"code_editing"}, "enabled": true}, http.StatusOK)
+	if adapter["id"] != "test-agent" || adapter["available"] != true {
+		t.Fatalf("adapter=%v", adapter)
+	}
+	if adapters := getJSONArray(t, ts.URL+"/api/agent-adapters"); len(adapters) < 6 {
+		t.Fatalf("adapters=%v", adapters)
+	}
+	doJSON(t, http.MethodPost, ts.URL+"/api/agent-adapters", map[string]any{"id": "codex", "name": "Override", "command": "tool", "args": []string{"{{prompt}}"}, "enabled": true}, http.StatusBadRequest)
+
+	requirement := doJSON(t, http.MethodPost, ts.URL+"/api/requirements", map[string]any{"title": "API handoff"}, http.StatusCreated)
+	task := doJSON(t, http.MethodPost, ts.URL+"/api/tasks", map[string]any{"requirementId": requirement["id"], "title": "Implement handoff"}, http.StatusCreated)
+	taskID := task["id"].(string)
+	handoff := doJSON(t, http.MethodPost, ts.URL+"/api/tasks/"+taskID+"/handoffs", map[string]any{"toAdapter": "codex", "summary": "Continue with code review", "remainingWork": []string{"Review password=hunter2 handling"}, "validation": []string{"Run tests"}}, http.StatusCreated)
+	encoded, _ := json.Marshal(handoff)
+	if bytes.Contains(encoded, []byte("hunter2")) || handoff["status"] != models.HandoffStatusOpen {
+		t.Fatalf("handoff=%s", encoded)
+	}
+	if handoffs := getJSONArray(t, ts.URL+"/api/tasks/"+taskID+"/handoffs"); len(handoffs) != 1 {
+		t.Fatalf("handoffs=%v", handoffs)
+	}
+	accepted := doJSON(t, http.MethodPost, ts.URL+"/api/handoffs/"+handoff["id"].(string)+"/accept", map[string]any{}, http.StatusOK)
+	if accepted["status"] != models.HandoffStatusAccepted {
+		t.Fatalf("accepted=%v", accepted)
+	}
+	doJSON(t, http.MethodDelete, ts.URL+"/api/agent-adapters/test-agent", nil, http.StatusNoContent)
 }
 
 func TestRequirementCriteriaTaskFlow(t *testing.T) {
@@ -234,6 +272,67 @@ func TestAIPlanProviderAndApplyAPI(t *testing.T) {
 		t.Fatalf("tasks=%v", tasks)
 	}
 	doJSON(t, "POST", ts.URL+"/api/requirements/"+requirementID+"/ai-plan/apply", map[string]any{}, http.StatusBadRequest)
+}
+
+func TestConfiguredAIProviderDoesNotExposeSecretReferences(t *testing.T) {
+	t.Setenv("DEVCYCLE_PROVIDER_TEST_KEY", "provider-secret-value")
+	ts := newTestServer(t)
+	provider := doJSON(t, http.MethodPost, ts.URL+"/api/ai/providers", map[string]any{"id": "local-test", "name": "Local Test", "kind": "custom_openai", "baseUrl": "http://127.0.0.1:11434/v1", "model": "local-model", "apiKeyHeader": "Authorization", "apiKeyPrefix": "Bearer", "secretEnvironment": "DEVCYCLE_PROVIDER_TEST_KEY", "enabled": true}, http.StatusOK)
+	encoded, _ := json.Marshal(provider)
+	for _, forbidden := range []string{"provider-secret-value", "DEVCYCLE_PROVIDER_TEST_KEY", "secretRef"} {
+		if bytes.Contains(encoded, []byte(forbidden)) {
+			t.Fatalf("provider response leaked %q: %s", forbidden, encoded)
+		}
+	}
+	preview := doJSON(t, http.MethodPost, ts.URL+"/api/ai/request-preview", map[string]any{"provider": "local-test", "input": "token=preview-secret prepare plan"}, http.StatusOK)
+	previewJSON, _ := json.Marshal(preview)
+	if bytes.Contains(previewJSON, []byte("preview-secret")) || preview["redactionCount"].(float64) != 1 {
+		t.Fatalf("preview=%s", previewJSON)
+	}
+	providers := getJSONArray(t, ts.URL+"/api/ai/providers")
+	providersJSON, _ := json.Marshal(providers)
+	if bytes.Contains(providersJSON, []byte("DEVCYCLE_PROVIDER_TEST_KEY")) || bytes.Contains(providersJSON, []byte("provider-secret-value")) {
+		t.Fatalf("provider list leaked secret material: %s", providersJSON)
+	}
+	doJSON(t, http.MethodDelete, ts.URL+"/api/ai/providers/local-test", nil, http.StatusNoContent)
+}
+
+func TestPlanningDocumentEditConflictAndApplyAPI(t *testing.T) {
+	ts := newTestServer(t)
+	requirement := doJSON(t, http.MethodPost, ts.URL+"/api/requirements", map[string]any{"title": "Structured delivery plan", "description": "Keep manual mode available"}, http.StatusCreated)
+	requirementID := requirement["id"].(string)
+	criterion := "Manual planning remains fully usable"
+	document := models.PlanningDocument{
+		SchemaVersion:    models.PlanningDocumentSchemaV1,
+		RequirementID:    requirementID,
+		Understanding:    "Deliver a complete editable planning workflow",
+		Scope:            models.PlanScope{Included: []string{"Planning editor"}, Excluded: []string{"Automatic production deployment"}},
+		Assumptions:      []string{"Users can edit every generated field"},
+		OpenQuestions:    []models.PlanQuestion{{Question: "Which agent should start?", Blocking: false, SuggestedDefault: "Use the first available adapter"}},
+		Criteria:         []models.PlanCriterion{{Description: criterion, Rationale: "No AI provider is required"}},
+		TestCases:        []models.PlanTestCase{{Title: "Save manual plan", Criterion: criterion, Kind: "integration", Steps: []string{"Save the plan"}, Expected: []string{"The plan revision advances"}}},
+		TestStrategy:     models.PlanTestStrategy{Summary: "Exercise persistence and revision conflicts", Environments: []string{"local"}, Commands: []string{"go test ./..."}},
+		Tasks:            []models.PlanTask{{Title: "Implement planning editor", Description: "Expose every planning field", Order: 1, SuggestedAdapter: "codex", ExpectedDeliverables: []string{"Editable plan"}}},
+		Risks:            []models.PlanRisk{{Risk: "Concurrent edits overwrite work", Severity: "medium", Mitigation: "Use revision checks"}},
+		RollbackConcerns: []string{"Preserve the previous document revision"},
+		CandidateNotes:   "Planning workflow is ready for verification",
+		Source:           "manual", Status: "draft",
+	}
+	saved := doJSON(t, http.MethodPut, ts.URL+"/api/requirements/"+requirementID+"/plan", document, http.StatusOK)
+	if saved["revision"].(float64) != 1 {
+		t.Fatalf("saved=%v", saved)
+	}
+	loaded := doJSON(t, http.MethodGet, ts.URL+"/api/requirements/"+requirementID+"/plan", nil, http.StatusOK)
+	if loaded["understanding"] != document.Understanding {
+		t.Fatalf("loaded=%v", loaded)
+	}
+	doJSON(t, http.MethodPut, ts.URL+"/api/requirements/"+requirementID+"/plan", document, http.StatusConflict)
+	document.Revision = 1
+	applied := doJSON(t, http.MethodPost, ts.URL+"/api/requirements/"+requirementID+"/ai-plan/apply", map[string]any{"document": document}, http.StatusCreated)
+	plan := applied["plan"].(map[string]any)
+	if plan["status"] != "applied" || plan["revision"].(float64) != 2 || len(applied["criteria"].([]any)) != 1 || len(applied["tasks"].([]any)) != 1 {
+		t.Fatalf("applied=%v", applied)
+	}
 }
 
 // initTempRepo creates a real git repository with one commit; skips if git is missing.

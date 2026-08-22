@@ -60,10 +60,13 @@ func New(dbPath string) (*App, error) {
 		_ = st.Close()
 		return nil, err
 	}
+	aiService := devai.NewService()
+	aiService.Configs = st
+	aiService.Secrets = devai.NewKeyringSecretStore()
 	return &App{
 		Store:         st,
 		Git:           git.NewCLIRunner(),
-		AI:            devai.NewService(),
+		AI:            aiService,
 		DBPath:        abs,
 		processes:     map[string]*runningAgent{},
 		verifications: map[string]*runningVerification{},

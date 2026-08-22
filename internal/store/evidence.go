@@ -33,7 +33,7 @@ func (s *Store) CreateEvidence(ctx context.Context, e models.Evidence) (models.E
 	return e, tx.Commit()
 }
 func (s *Store) ListEvidence(ctx context.Context, requirementID string) ([]models.Evidence, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,requirement_id,criterion_id,task_id,kind,title,status,uri,inline_content,metadata_json,created_at FROM evidence WHERE requirement_id=? ORDER BY created_at DESC`, requirementID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,requirement_id,criterion_id,task_id,kind,title,status,uri,inline_content,metadata_json,created_at FROM evidence WHERE requirement_id=? ORDER BY created_at DESC, rowid DESC`, requirementID)
 	if err != nil {
 		return nil, err
 	}

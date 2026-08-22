@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,6 +19,78 @@ func openTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { _ = s.Close() })
 	return s
+}
+
+func TestMigrationFromSchemaV2PreservesExistingData(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v2.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(migrations[0]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(migrations[1]); err != nil {
+		t.Fatal(err)
+	}
+	now := formatTime(time.Now().UTC())
+	if _, err = db.Exec(`INSERT INTO requirements(id,title,description,created_at,updated_at) VALUES('existing','Existing requirement','keep me',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO ai_providers(id,name,kind,base_url,model,enabled,timeout_seconds,secret_ref,created_at,updated_at) VALUES('existing-ai','Existing AI','openai_compatible','https://example.com/v1','model',1,30,'env:EXISTING_KEY',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`PRAGMA user_version = 2`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	upgraded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer upgraded.Close()
+	requirement, err := upgraded.GetRequirement(context.Background(), "existing")
+	if err != nil || requirement.Description != "keep me" {
+		t.Fatalf("requirement=%+v err=%v", requirement, err)
+	}
+	provider, err := upgraded.GetAIProvider(context.Background(), "existing-ai")
+	if err != nil || provider.SecretRef != "env:EXISTING_KEY" {
+		t.Fatalf("provider=%+v err=%v", provider, err)
+	}
+	var version int
+	if err = upgraded.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != SchemaVersion {
+		t.Fatalf("version=%d err=%v", version, err)
+	}
+}
+
+func TestAgentAdapterAndTaskHandoffPersistence(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	adapter := models.AgentAdapterConfig{ID: "team-agent", Name: "Team Agent", Command: "team-agent", Args: []string{"run", "{{prompt}}"}, Capabilities: []string{"code_editing"}, Enabled: true}
+	saved, err := s.SaveAgentAdapter(ctx, adapter)
+	if err != nil || saved.ID != adapter.ID || len(saved.Args) != 2 {
+		t.Fatalf("adapter=%+v err=%v", saved, err)
+	}
+	requirement, _ := s.CreateRequirement(ctx, "Durable handoff", "")
+	task, _ := s.CreateTask(ctx, requirement.ID, "Continue implementation", "")
+	session, err := s.CreateAgentSession(ctx, models.AgentSession{TaskID: task.ID, Provider: "kimi", Prompt: "work", WorkingDir: t.TempDir(), Status: "completed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := s.CreateTaskHandoff(ctx, models.TaskHandoff{RequirementID: requirement.ID, TaskID: task.ID, FromSessionID: session.ID, FromAdapter: "kimi", ToAdapter: adapter.ID, Summary: "Core implementation is ready", CompletedWork: []string{"Implemented storage"}, RemainingWork: []string{"Add UI"}, Risks: []string{}, Validation: []string{"Run tests"}, ChangedFiles: []string{"internal/store/store.go"}})
+	if err != nil || handoff.Status != models.HandoffStatusOpen || len(handoff.RemainingWork) != 1 || len(handoff.ChangedFiles) != 1 {
+		t.Fatalf("handoff=%+v err=%v", handoff, err)
+	}
+	handoff, err = s.AcceptTaskHandoff(ctx, handoff.ID, "")
+	if err != nil || handoff.Status != models.HandoffStatusAccepted || handoff.AcceptedAt.IsZero() {
+		t.Fatalf("accepted=%+v err=%v", handoff, err)
+	}
+	if _, err = s.AcceptTaskHandoff(ctx, handoff.ID, ""); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("expected second acceptance to fail, got %v", err)
+	}
 }
 
 func TestMigrationVersionAndInsertPlanRollback(t *testing.T) {
@@ -209,5 +283,30 @@ func TestDeletingCriterionAndTaskUnlinksHistoricalEvidence(t *testing.T) {
 	sessions, err := s.ListAgentSessions(ctx, task.ID)
 	if err != nil || len(sessions) != 0 {
 		t.Fatalf("sessions after task deletion: %+v err=%v", sessions, err)
+	}
+}
+
+func TestListEvidenceUsesInsertionOrderAsTimestampTieBreaker(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	requirement, err := s.CreateRequirement(ctx, "Stable evidence ordering", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.CreateEvidence(ctx, models.Evidence{RequirementID: requirement.ID, Kind: models.EvidenceKindTest, Title: "first", Status: "passed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.CreateEvidence(ctx, models.Evidence{RequirementID: requirement.ID, Kind: models.EvidenceKindTest, Title: "second", Status: "failed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tied := formatTime(time.Now().UTC().Truncate(time.Second))
+	if _, err = s.db.ExecContext(ctx, `UPDATE evidence SET created_at=? WHERE id IN (?,?)`, tied, first.ID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := s.ListEvidence(ctx, requirement.ID)
+	if err != nil || len(evidence) != 2 || evidence[0].ID != second.ID || evidence[1].ID != first.ID {
+		t.Fatalf("evidence=%+v err=%v", evidence, err)
 	}
 }
