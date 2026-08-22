@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic private-key fixture used to verify redaction"
+targetRules = ["private-key"]
+paths = ['''^internal/ai/service_test\.go$''']

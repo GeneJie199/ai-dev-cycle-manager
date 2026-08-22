@@ -17,6 +17,7 @@ func main() {
 	}
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 	args := append([]string{"run", "./cmd/devcycle", "demo"}, os.Args[1:]...)
+	// #nosec G702 -- demo input is passed as argv to a fixed Go executable, never through a shell.
 	cmd := exec.Command("go", args...)
 	cmd.Dir = root
 	cmd.Stdout = os.Stdout

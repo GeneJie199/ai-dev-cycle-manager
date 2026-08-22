@@ -73,3 +73,16 @@ func TestLimitedBufferBoundsMemory(t *testing.T) {
 		t.Fatalf("buffer=%q written=%d exceeded=%v err=%v", buffer.String(), written, buffer.exceeded, err)
 	}
 }
+
+func FuzzAssistantOutput(f *testing.F) {
+	f.Add(`{"summary":"ok"}`)
+	f.Add("analysis\n```json\n{\"summary\":\"ok\"}\n```")
+	f.Add("token=synthetic-test-value {not-json}")
+	f.Fuzz(func(t *testing.T, output string) {
+		var result struct {
+			Summary string `json:"summary"`
+		}
+		_ = ExtractJSONObject(output, &result)
+		_, _ = Redact(output)
+	})
+}
