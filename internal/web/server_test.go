@@ -100,7 +100,7 @@ func TestStaticIndex(t *testing.T) {
 	if !bytes.Contains(buf.Bytes(), []byte("DevCycle")) {
 		t.Fatal("index page missing title")
 	}
-	for _, marker := range []string{"form-create-req", "plan-editor", "provider-list", "adapter-list", "view-activity", "view-git"} {
+	for _, marker := range []string{"form-create-req", "plan-editor", "provider-list", "adapter-list", "view-activity", "view-git", `class="skip-link"`, `id="main-content" tabindex="-1"`, `aria-labelledby="confirm-title"`, `aria-label="套件模块"`} {
 		if !bytes.Contains(buf.Bytes(), []byte(marker)) {
 			t.Fatalf("index page missing product surface %q", marker)
 		}

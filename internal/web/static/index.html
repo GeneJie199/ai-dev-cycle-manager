@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<a class="skip-link" href="#main-content">跳到主要内容</a>
 <header class="topbar">
   <a class="product-brand" href="#/workbench" aria-label="DevCycle 工作台">
     <span class="brand-mark"><i data-lucide="workflow"></i></span>
@@ -16,11 +17,11 @@
   <div class="topbar-actions">
     <span class="privacy-state"><i data-lucide="shield-check"></i> 本地运行</span>
     <details class="suite-switcher">
-      <summary><i data-lucide="blocks"></i><span>套件模块</span></summary>
+      <summary aria-label="套件模块"><i data-lucide="blocks"></i><span>套件模块</span></summary>
       <div class="suite-menu">
         <a data-suite="devcycle" class="current"><i data-lucide="workflow"></i><span><b>DevCycle</b><small>研发交付</small></span></a>
         <a data-suite="infrascout"><i data-lucide="scan-search"></i><span><b>InfraScout</b><small>基础设施发现</small></span></a>
-        <a data-suite="fleetscope"><i data-lucide="activity"></i><span><b>FleetScope</b><small>舰队监控</small></span></a>
+        <a data-suite="fleetscope"><i data-lucide="activity"></i><span><b>FleetScope</b><small>原生监控</small></span></a>
         <a data-suite="releaseguard"><i data-lucide="shield-check"></i><span><b>ReleaseGuard</b><small>发布门禁</small></span></a>
       </div>
     </details>
@@ -36,8 +37,9 @@
 
 <div id="toast" class="hidden" role="status" aria-live="polite"></div>
 
-<main>
+<main id="main-content" tabindex="-1">
   <section id="view-workbench" class="view active" aria-label="需求工作台">
+    <h1 class="sr-only">DevCycle 研发交付工作台</h1>
     <div class="wb-layout">
       <aside class="req-panel" aria-label="需求列表">
         <div class="aside-head"><div><strong>交付需求</strong><span id="req-count">0 项</span></div></div>
@@ -147,8 +149,8 @@
   </section>
 </main>
 
-<dialog id="confirm-dialog"><form method="dialog" class="dialog-card"><header><h2 id="confirm-title">确认操作</h2><button value="cancel" class="icon-btn" aria-label="关闭"><i data-lucide="x"></i></button></header><p id="confirm-message"></p><footer><button value="cancel" class="btn ghost">取消</button><button id="confirm-submit" value="confirm" class="btn danger-fill">确认</button></footer></form></dialog>
-<dialog id="ai-request-dialog"><form method="dialog" class="dialog-card wide"><header><div><span class="eyebrow ai">发送前检查</span><h2>AI 请求预览</h2></div><button value="cancel" class="icon-btn" aria-label="关闭"><i data-lucide="x"></i></button></header><div id="ai-request-preview"></div><footer><button value="cancel" class="btn ghost">取消</button><button value="confirm" class="btn ai-btn"><i data-lucide="send"></i>确认发送</button></footer></form></dialog>
+<dialog id="confirm-dialog" aria-labelledby="confirm-title"><form method="dialog" class="dialog-card"><header><h2 id="confirm-title">确认操作</h2><button value="cancel" class="icon-btn" aria-label="关闭"><i data-lucide="x"></i></button></header><p id="confirm-message"></p><footer><button value="cancel" class="btn ghost">取消</button><button id="confirm-submit" value="confirm" class="btn danger-fill">确认</button></footer></form></dialog>
+<dialog id="ai-request-dialog" aria-labelledby="ai-request-title"><form method="dialog" class="dialog-card wide"><header><div><span class="eyebrow ai">发送前检查</span><h2 id="ai-request-title">AI 请求预览</h2></div><button value="cancel" class="icon-btn" aria-label="关闭"><i data-lucide="x"></i></button></header><div id="ai-request-preview"></div><footer><button value="cancel" class="btn ghost">取消</button><button value="confirm" class="btn ai-btn"><i data-lucide="send"></i>确认发送</button></footer></form></dialog>
 <footer class="app-footer"><span><i data-lucide="lock-keyhole"></i>仅监听本机，数据保存于本地 SQLite</span><span>DevCycle v1</span></footer>
 <script src="/vendor/lucide.min.js"></script><script src="/suite.js"></script><script src="/app.js"></script>
 </body>

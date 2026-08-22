@@ -111,7 +111,7 @@ function currentRoute() {
   return { view, reqId: view === "workbench" ? (parts[1] || "") : "", mode, settingsTab };
 }
 
-function route() {
+function route(event) {
   const { view, reqId, mode, settingsTab } = currentRoute();
   const sameWorkbench = state.view === "workbench" && view === "workbench" && state.reqId === reqId && !$("#req-content").classList.contains("hidden");
   state.view = view;
@@ -122,11 +122,16 @@ function route() {
     if (active) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
   });
   document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === `view-${view}`));
+  document.title = `${({ workbench: "工作台", activity: "活动中心", git: "代码变更", settings: "设置" })[view]} · DevCycle`;
   if (view === "workbench" && sameWorkbench) applyWorkbenchMode();
   else if (view === "workbench") loadWorkbench(reqId).catch((error) => toast(error.message, true));
   else if (view === "activity") loadActivity().catch((error) => toast(error.message, true));
   else if (view === "git") loadGitView().catch((error) => toast(error.message, true));
   else loadSettings(settingsTab).catch((error) => toast(error.message, true));
+  if (event) {
+    const heading = document.querySelector(`#view-${view} h1, #view-${view} h2`);
+    if (heading) { heading.tabIndex = -1; heading.focus({ preventScroll: true }); }
+  }
   refreshIcons();
 }
 window.addEventListener("hashchange", route);
