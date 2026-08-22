@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   test:
@@ -36,12 +38,29 @@ jobs:
       - name: Reachable vulnerability scan
         if: matrix.os == 'ubuntu-latest'
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      - name: Security and secret scan
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: bash scripts/security-check.sh
+      - name: AI parser fuzz smoke
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -parallel=2 -run='^$' -fuzz='^FuzzAssistantOutput$' -fuzztime=5s ./internal/ai
       - name: Changelog contains release
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
           grep -q "^## ${version%%-*}" CHANGELOG.md
+      - name: Verify installer syntax
+        if: matrix.os == 'ubuntu-latest'
+        run: sh -n scripts/install.sh
+      - name: Verify Windows installer syntax
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/install.ps1'), [ref]$null, [ref]$errors)
+          if ($errors.Count) { $errors | Format-List; exit 1 }
 
   build:
     needs: test
@@ -49,11 +68,11 @@ jobs:
     strategy:
       matrix:
         include:
-          - { goos: linux, goarch: amd64, ext: "" }
-          - { goos: linux, goarch: arm64, ext: "" }
-          - { goos: darwin, goarch: amd64, ext: "" }
-          - { goos: darwin, goarch: arm64, ext: "" }
-          - { goos: windows, goarch: amd64, ext: ".exe" }
+          - { goos: linux, goarch: amd64, ext: "", archive: "tar.gz" }
+          - { goos: linux, goarch: arm64, ext: "", archive: "tar.gz" }
+          - { goos: darwin, goarch: amd64, ext: "", archive: "tar.gz" }
+          - { goos: darwin, goarch: arm64, ext: "", archive: "tar.gz" }
+          - { goos: windows, goarch: amd64, ext: ".exe", archive: "zip" }
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -68,22 +87,47 @@ jobs:
           CGO_ENABLED: 0
         run: |
           version="${GITHUB_REF_NAME#v}"
-          go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "devcycle-${GOOS}-${GOARCH}${{ matrix.ext }}" ./cmd/devcycle
+          binary="devcycle-${GOOS}-${GOARCH}${{ matrix.ext }}"
+          package="devcycle-${version}-${GOOS}-${GOARCH}"
+          go build -trimpath -ldflags "-s -w -X main.version=${version}" -o "$binary" ./cmd/devcycle
+          mkdir "$package"
+          cp "$binary" "$package/devcycle${{ matrix.ext }}"
+          cp README.md CHANGELOG.md LICENSE SECURITY.md "$package/"
+          cp -R deploy docs examples scripts "$package/"
+          if [ "$GOOS" = windows ]; then
+            zip -qr "${package}.zip" "$package"
+          else
+            tar -czf "${package}.tar.gz" "$package"
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: devcycle-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: devcycle-*
+          path: |
+            devcycle-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+            devcycle-*-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       - name: Checksums
-        run: cd dist && sha256sum devcycle-* > checksums.txt
+        run: |
+          go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 mod -licenses -json -output "dist/devcycle-${GITHUB_REF_NAME}.cdx.json" .
+          cd dist && sha256sum devcycle-* > checksums.txt
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/*
       - uses: softprops/action-gh-release@v3
         with:
           files: dist/*

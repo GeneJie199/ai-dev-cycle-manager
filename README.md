@@ -5,7 +5,15 @@ DevCycle 是本地优先的 AI 开发生命周期工作台，把一句交付目�
 [![CI](https://github.com/GeneJie199/ai-dev-cycle-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/GeneJie199/ai-dev-cycle-manager/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-## 能做什么
+## Screenshot
+
+![DevCycle requirement verification workbench](https://raw.githubusercontent.com/GeneJie199/ai-devops-open-suite/main/assets/devcycle-workbench.png)
+
+## Why
+
+AI coding tools can produce code quickly, but they do not preserve why a change exists, what must pass, which evidence is current, or whether the result is ready to release. DevCycle keeps that lifecycle explicit without replacing the coding agent or Git.
+
+## Core Features
 
 - 从自然语言创建需求，手工或借助 AI 生成完整交付计划。
 - 在保存和拆分前编辑范围、假设、待确认问题、验收标准、测试、任务依赖、风险、回滚与候选说明。
@@ -19,7 +27,7 @@ DevCycle 是本地优先的 AI 开发生命周期工作台，把一句交付目�
 
 Web UI、Lucide 图标和 SQLite 驱动全部嵌入单个 Go 二进制，运行时不依赖 Node、CDN、Prometheus 或云端控制面。
 
-## 快速开始
+## Quick Start
 
 需要 Go 1.26.6+ 和 Git。Agent 与 AI 是可选增强项，没有安装任何 AI 工具时，手工计划、Git、验证、证据和报告仍可完整使用。
 
@@ -43,6 +51,89 @@ Windows 使用 `devcycle.exe`。打开 `http://127.0.0.1:8766/` 后：
 ./devcycle demo
 ```
 
+## Online Install
+
+The lowest-friction path installs the complete Open Suite, starts every local service, and includes DevCycle:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/GeneJie199/ai-devops-open-suite/main/scripts/bootstrap.sh | bash
+```
+
+```powershell
+irm https://raw.githubusercontent.com/GeneJie199/ai-devops-open-suite/main/scripts/bootstrap.ps1 | iex
+```
+
+For DevCycle alone, download the archive for your platform from [Releases](https://github.com/GeneJie199/ai-dev-cycle-manager/releases/latest), extract it, and run the included `scripts/install.sh` or `scripts/install.ps1`. The installer can verify the release `checksums.txt` before copying the binary.
+
+## Offline Install
+
+On an online machine, download the matching `devcycle-<version>-<os>-<arch>` archive and `checksums.txt`. Move both files to the offline machine, extract once, then run:
+
+```bash
+sh scripts/install.sh install ./devcycle ./checksums.txt
+```
+
+```powershell
+.\scripts\install.ps1 -Action Install -Source .\devcycle.exe -Checksums .\checksums.txt
+```
+
+The [full offline Open Suite bundle](https://github.com/GeneJie199/ai-devops-open-suite/releases/latest) includes DevCycle and all required protocol assets without accessing GitHub, npm, or a CDN during installation.
+
+## First Five Minutes
+
+1. Open `http://127.0.0.1:8766/`.
+2. Add a local Git repository in **Settings**.
+3. Enter one delivery goal on the workbench.
+4. Review an AI-generated plan or create criteria and tasks manually.
+5. Run validation, attach evidence, and export the release candidate.
+
+## AI Optional
+
+Without an AI provider, requirement editing, criteria, tasks, Worktrees, Git diff, validation, evidence, reports, and release candidates remain available. AI only drafts editable plans and explanations. It cannot mark evidence as passed, merge code, or approve a release.
+
+## Comparison
+
+| Tool category | What it does well | DevCycle's role |
+|---|---|---|
+| Coding agents | Implement code | Coordinates intent, task ownership, evidence, and handoff across agents |
+| Issue trackers | Team backlog and collaboration | Keeps a local delivery chain tied to Git and executable verification |
+| CI systems | Run remote pipelines | Runs bounded local checks and records evidence before a release candidate exists |
+| Git clients | Branches and diffs | Explains user impact and ties changes back to acceptance criteria |
+
+## Architecture
+
+```mermaid
+flowchart LR
+  R[Requirement] --> P[Editable plan]
+  P --> T[Criteria and tasks]
+  T --> A[Agent or manual work]
+  A --> G[Git diff and tests]
+  G --> E[Evidence]
+  E --> C[Release candidate]
+  C --> RG[ReleaseGuard]
+```
+
+The embedded web app calls a loopback-only Go service backed by SQLite. Agent adapters are process boundaries; cross-product artifacts use versioned `lifecycle-spec` JSON rather than private database access.
+
+## Security
+
+- The service refuses non-loopback listeners.
+- Secrets use the operating-system credential store or named environment variables and are redacted from logs, previews, and evidence.
+- Agent and verification output is bounded; Git option-like revisions and unknown JSON fields are rejected.
+- Releases include SHA-256 checksums, a CycloneDX SBOM, and GitHub build provenance.
+
+See [SECURITY.md](SECURITY.md) and [docs/operations.md](docs/operations.md).
+
+## Roadmap
+
+The v1.0 boundary is a stable local single-user workbench. Multi-user collaboration and hosted control planes remain post-1.0 work tracked in the [Open Suite roadmap](https://github.com/GeneJie199/ai-devops-open-suite/blob/main/ROADMAP.md).
+
+## Contributing
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). Use the issue templates for reproducible bugs and feature proposals; report vulnerabilities privately through [SECURITY.md](SECURITY.md).
+
+## Product Reference
+
 ## 产品界面
 
 | 页面 | 交付能力 |
@@ -58,7 +149,7 @@ Windows 使用 `devcycle.exe`。打开 `http://127.0.0.1:8766/` 后：
 
 桌面与移动端使用同一套界面。移动端以“需求列表 → 单需求详情”导航，五个阶段在容器内横向滚动，不会造成页面级溢出。
 
-## AI 与 Agent
+## AI 与 Agent 细节
 
 AI 规划和代码解释始终先给出可审阅结果，不会自动写代码、合并分支或批准发布。API 提供方发送前会显示目标地址、模型、脱敏内容和明确的数据边界。
 
@@ -103,7 +194,7 @@ devcycle serve [--db PATH] [--addr 127.0.0.1:8766]
 
 默认数据库是 `./devcycle.db`，可用 `--db` 或 `DEVCYCLE_DB` 覆盖。
 
-## 安全与运维
+## 安全与运维细节
 
 服务硬性拒绝非 loopback 地址，因为本地 API 可以启动用户确认过的命令和 Agent。远程工作站请保持 DevCycle 监听本机，再通过 SSH 隧道访问。
 
@@ -115,7 +206,7 @@ sh ./scripts/install.sh ./devcycle
 
 备份、恢复、异常退出恢复和 systemd 用户服务见 [docs/operations.md](docs/operations.md)。发布标签自动构建 Linux、macOS、Windows 二进制并生成 SHA-256 校验文件。
 
-## 边界
+## Known Limitations
 
 - DevCycle 不替代代码编辑器或 coding agent，也不伪造 Agent 完成状态。
 - 不自动合并 Git 分支，不自动批准验收，不直接上线。

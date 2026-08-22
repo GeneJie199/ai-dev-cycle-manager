@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0 - 2026-08-23
+
+- Deliver the complete requirement-first workflow from editable AI/manual planning through real Agent sessions, humanized Git, deterministic tests/evidence, acceptance, handoff, and release candidate.
+- Preserve full manual operation and provider-neutral AI with redacted request preview, protected credentials, strict output validation, and no model lock-in.
+- Add checksum-verifying install/doctor/uninstall/purge scripts, complete platform archives, external-user onboarding, fuzz/security gates, CycloneDX SBOM, and GitHub provenance.
+
 ## 0.4.0 - 2026-08-22
 
 - Add the editable `devcycle.planning-document/v1` contract with scope, assumptions, questions, criteria, test cases, strategy, ordered tasks, dependencies, risks, rollback concerns, candidate notes, durable revisions, and atomic application.
