@@ -67,7 +67,7 @@ For DevCycle alone, download the archive for your platform from [Releases](https
 
 ## Offline Install
 
-On an online machine, download the matching `devcycle-<version>-<os>-<arch>` archive and `checksums.txt`. Move both files to the offline machine, extract once, then run:
+On an online machine, download the matching `devcycle-<version>-<os>-<arch>` archive and release-level `checksums.txt`, and verify the archive before transfer. Extract once; the archive's own `checksums.txt` covers the platform-local `devcycle` binary used below:
 
 ```bash
 sh scripts/install.sh install ./devcycle ./checksums.txt

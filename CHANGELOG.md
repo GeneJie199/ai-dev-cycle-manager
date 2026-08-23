@@ -5,6 +5,7 @@
 - Deliver the complete requirement-first workflow from editable AI/manual planning through real Agent sessions, humanized Git, deterministic tests/evidence, acceptance, handoff, and release candidate.
 - Preserve full manual operation and provider-neutral AI with redacted request preview, protected credentials, strict output validation, and no model lock-in.
 - Add checksum-verifying install/doctor/uninstall/purge scripts, complete platform archives, external-user onboarding, fuzz/security gates, CycloneDX SBOM, and GitHub provenance.
+- Include and build-verify a platform-local binary checksum inside every standalone archive.
 
 ## 0.4.0 - 2026-08-22
 
