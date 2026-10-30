@@ -311,6 +311,10 @@ func verificationKind(name string) string {
 }
 
 func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt string) (models.AgentSession, error) {
+	return a.startAgentSessionModel(ctx, taskID, provider, "", prompt)
+}
+
+func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, model, prompt string) (models.AgentSession, error) {
 	task, err := a.Store.GetTask(ctx, taskID)
 	if err != nil {
 		return models.AgentSession{}, err
@@ -330,6 +334,18 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 		return models.AgentSession{}, errors.New("agent adapter is disabled")
 	}
 	binary, args, err := devagent.BuildCommand(adapter, prompt)
+	if model != "" {
+		found := false
+		for i := range args {
+			if strings.Contains(args[i], "{{model}}") {
+				found = true
+				args[i] = strings.ReplaceAll(args[i], "{{model}}", model)
+			}
+		}
+		if !found {
+			return models.AgentSession{}, errors.New("AI Team adapter requires an explicit {{model}} argv placeholder")
+		}
+	}
 	if err != nil {
 		return models.AgentSession{}, err
 	}
@@ -347,7 +363,7 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 	if err != nil {
 		return models.AgentSession{}, err
 	}
-	cmd := exec.Command(path, args...)
+	cmd := exec.CommandContext(context.Background(), path, args...)
 	cmd.Dir = task.WorktreePath
 	prepareManagedCommand(cmd)
 	cmd.Stdout = logFile

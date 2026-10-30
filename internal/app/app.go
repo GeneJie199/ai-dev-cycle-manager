@@ -15,10 +15,12 @@ import (
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/git"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/store"
+	"github.com/GeneJie199/ai-dev-cycle-manager/internal/team"
 )
 
 // App is the backend façade. Wails can bind exported methods on this type later.
 type App struct {
+	Team           *team.Store
 	Store          *store.Store
 	Git            *git.CLIRunner
 	Codex          agent.CodexAdapter // optional; nil until a real adapter is injected
@@ -63,7 +65,13 @@ func New(dbPath string) (*App, error) {
 	aiService := devai.NewService()
 	aiService.Configs = st
 	aiService.Secrets = devai.NewKeyringSecretStore()
+	teamStore, err := team.Open(abs + ".team.db")
+	if err != nil {
+		_ = st.Close()
+		return nil, err
+	}
 	return &App{
+		Team:          teamStore,
 		Store:         st,
 		Git:           git.NewCLIRunner(),
 		AI:            aiService,
@@ -87,6 +95,9 @@ func (a *App) Close() error {
 	a.mu.Unlock()
 	a.agentWG.Wait()
 	a.verificationWG.Wait()
+	if a.Team != nil {
+		_ = a.Team.Close()
+	}
 	if a.Store != nil {
 		return a.Store.Close()
 	}

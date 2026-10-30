@@ -43,6 +43,7 @@ func NewServer(a *app.App, logger *log.Logger) (*Server, error) {
 		logger = log.Default()
 	}
 	s := &Server{app: a, mux: http.NewServeMux(), logger: logger}
+	s.registerTeamRoutes()
 
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
