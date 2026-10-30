@@ -73,6 +73,25 @@ All final task heads/clean states are rechecked before completion. Acceptance re
 to configured command/review scope; it does not claim untested product semantics.
 The standard DevCycle development report and release candidate remain available.
 
+Synchronous and asynchronous machine commands record runtime-owned string metadata:
+`verificationRunId`, `sourceRepository`, `sourceWorktree`, `sourceCommit`,
+`sourceClean`, and the corresponding `sourceRepositoryAfter`, `sourceWorktreeAfter`,
+`sourceCommitAfter`, `sourceCleanAfter`. `sourceVerified=true` requires the same
+Git repository, worktree and HEAD, with clean state both before and after execution.
+Source changes make verification fail even if the process exit code is zero; the
+actual exit code remains recorded. A non-Git command can run but records
+`sourceVerified=false` and cannot provide source-bound release proof. Public evidence
+creation cannot supply these reserved attestation fields.
+
+When a candidate has machine runs or belongs to AI Team, readiness checks the latest
+proof for each command, working directory and task against the exported sources.
+Each source HEAD must be covered by a verified machine commit or its ancestor chain;
+an explorer's older baseline cannot cover a newer untested implementation. A clean
+new commit makes old proof stale until the check is rerun. A fresh same-command pass
+can replace earlier failed or stale proof. Legacy manual candidates without machine
+runs retain their existing readiness behavior. These additions use existing evidence
+metadata and `readiness.ready`; neither schema 3 nor the v1 candidate DTO changes.
+
 ## API
 
 | Endpoint | Purpose |

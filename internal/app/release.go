@@ -266,7 +266,13 @@ func (a *App) ExportReleaseCandidate(ctx context.Context, requirementID string) 
 		}
 	}
 	r.SourcesTotal = len(sources)
+	runs, err := a.Store.ListVerificationRuns(ctx, requirementID)
+	if err != nil {
+		return ReleaseCandidate{}, fmt.Errorf("verification runs: %w", err)
+	}
+	machineEvidenceRequired := len(runs) > 0 || strings.HasPrefix(req.Title, "AI Team ")
 	r.Ready = r.CriteriaTotal > 0 && r.CriteriaSatisfied == r.CriteriaTotal && r.CriteriaWithEvidence == r.CriteriaTotal && r.TasksDone == r.TasksTotal && r.SourcesClean == r.SourcesTotal
+	r.Ready = r.Ready && (!machineEvidenceRequired || a.currentMachineEvidence(ctx, evidence, runs, sources))
 
 	return ReleaseCandidate{
 		Spec:               ReleaseCandidateSpec,
