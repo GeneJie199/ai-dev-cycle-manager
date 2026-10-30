@@ -30,3 +30,8 @@ Thumbs.db
 /.qa/
 /tmp/
 /worktrees/
+
+/.qa/
+/*-tests.log
+/baseline-suite.log
+/AI-DEV-V2-C0-DELIVERY.zip*

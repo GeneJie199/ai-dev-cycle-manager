@@ -1,0 +1,82 @@
+# AI Team runtime — development reference
+
+Implementation: DevCycle `internal/team`, `internal/app/team.go` and
+`internal/web/team.go`. Stable v1 workflows are retained. Start a locally built
+DevCycle with `devcycle serve --db <path> --addr 127.0.0.1:8766`, then open `/team.html`.
+The original workbench links to the new page.
+
+## Execution contract
+
+Mission owns a public project ID, requirement, acceptance criteria, plan/DAG, registry,
+risk, budget, memory snapshot, policy and execution history. Roles are lead, frontend,
+explorer, QA and review. Each task uses the existing DevCycle worktree APIs, a unique
+branch and an existing managed Agent session. Context handoffs use the existing
+durable handoff service. Source is inherited serially from the last completed task's
+commit; this initial local scheduler does not run parallel implementation branches.
+
+`POST /api/team/missions` creates a validated mission. `POST .../{id}/advance` claims
+and executes at most one ready task; clients can loop to completion/escalation. The
+page does this automatically. GET endpoints never start execution. Repeated advances
+are serialized per mission; revision CAS and an OS-held sidecar lock prevent duplicate
+writers. `POST .../{id}/retry` cannot reset attempts, raise budgets or approve R4.
+
+States: pending, blocked, ready, running, completed, failed, retry, escalated.
+Failed execution records survive retries. Missing capabilities, exhausted budgets,
+unsupported enforcement or ambiguous recovery fail closed. A process exit alone is
+insufficient: source boundaries, committed clean state, persisted execution evidence,
+machine checks and required independent structured review are verified.
+
+Review findings can return work to lead under bounded `budget.maxFixes`; QA and review
+then receive fresh worktrees from the repaired branch. No automatic main merge occurs.
+QA must depend on implementation and review must depend on QA; cycles/unknown
+dependencies/duplicate IDs are rejected. R3 requires configured integration/security
+checks and two successful review tasks. R4 is never automatically executed/approved.
+
+## Git and permission boundaries
+
+Explorer/review are checked for no source or HEAD change. Frontend can integrate only
+`frontend/`, `web/`, `internal/web/static/`. QA can integrate tests, `*_test.go`, docs.
+Lead owns implementation and integration decisions. Unsupported paths fail the task.
+These checks contain integration changes; they are not OS isolation. A trusted CLI
+retains its OS user's privileges. Explicit `trustedLocalCLI` consent is required;
+requested enforced tool/network policies are rejected until a real enforcing executor
+is implemented. Never use an untrusted CLI or source repository with ambient secrets.
+
+An opt-in `policy.commitTaskChanges` lets the runtime validate the changed path set
+and commit it through the existing Git client. This supports sandboxed CLIs whose
+worktree index is write-protected. It does not bypass the CLI sandbox, merge main,
+rewrite history or push automatically. Without this policy, an agent must commit its
+own allowed changes. Read-only roles can never use it to commit edits.
+
+## Persistence, recovery and evidence
+
+Team state lives in `<original-db>.team.db` (schema 1), opened lazily. The original
+DevCycle DB remains schema 3; v1 binary rollback does not need to read team state.
+Back up the original DB, team sidecar, worktrees and session/verification logs together
+while stopped. OS locks release on crash. Startup recovery interrupts existing managed
+sessions; advance records ambiguous running team execution as failed and never assumes
+it succeeded or silently replays its side effects.
+
+Evidence binds mission/execution/session/provider/model, duration, retry/escalation,
+test/review outcome, source branch/HEAD and SHA-256 of the bounded redacted log.
+All final task heads/clean states are rechecked before completion. Acceptance refers
+to configured command/review scope; it does not claim untested product semantics.
+The standard DevCycle development report and release candidate remain available.
+
+## API
+
+| Endpoint | Purpose |
+|---|---|
+| `/api/team/missions` | GET list; POST create Simple/Expert configuration |
+| `/api/team/missions/{id}` | GET durable plan, executions, policies and evidence IDs |
+| `/api/team/missions/{id}/advance` | POST one dispatch/recovery step |
+| `/api/team/missions/{id}/retry` | POST bounded retry of eligible escalated tasks |
+| `/api/team/memory/{project}` | GET current memory or `?history=true`; PUT revisioned edit |
+| `/api/team/evaluations` | GET task/agent/model/result/test/review/usage history |
+| `/api/team/projects/{project}/status` | GET shared project/navigation contract foundation |
+| `/api/team/about`, `/api/team/license` | GET build/source identity and full license |
+
+Mutation endpoints reject cross-origin browser requests. Services remain loopback-only.
+No telemetry, provider request, deployment or background scheduler is started by GET.
+Public extension API: `api/extensions/v2` (capability, entitlement, policy, deployment
+plan interfaces). Community has no dependency on Enterprise or a license server.
