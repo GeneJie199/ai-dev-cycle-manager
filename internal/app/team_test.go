@@ -214,6 +214,9 @@ func TestTeamAgentFailureAndRecovery(t *testing.T) {
 	if m.Plan[0].State == "completed" || m.Executions[0].Result != "failed" {
 		t.Fatal("recovery fabricated completion")
 	}
+	if m.State != "escalated" || m.Plan[0].State != "escalated" {
+		t.Fatal("ambiguous worker would replay automatically")
+	}
 }
 func TestTeamRiskAndConsentFailClosed(t *testing.T) {
 	a, input := teamAppFixture(t)

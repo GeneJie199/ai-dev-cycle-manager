@@ -612,7 +612,15 @@ func (a *App) reconcileMission(ctx context.Context, m team.Mission) (team.Missio
 					return m, nil
 				}
 			}
-			return a.finishMissionTask(ctx, m, i, j, errors.New("interrupted execution requires retry; success is not inferred after recovery"))
+			recovered, err := a.finishMissionTask(ctx, m, i, j, errors.New("interrupted execution is ambiguous; inspect and stop any surviving worker before explicit retry"))
+			if err != nil {
+				return recovered, err
+			}
+			// Never let a client's normal advance loop replay an ambiguous process.
+			recovered.Plan[i].State = "escalated"
+			recovered.State = "escalated"
+			err = a.Team.Save(ctx, &recovered)
+			return recovered, err
 		}
 	}
 	return m, errors.New("running task has no execution")
