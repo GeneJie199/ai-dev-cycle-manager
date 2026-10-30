@@ -318,6 +318,9 @@ func (a *App) missionPrompt(ctx context.Context, m team.Mission, t team.Task) st
 	if t.Role == "review" {
 		prompt += "\nInspect committed changes against goal and machine checks. End with exactly one JSON line: {\"review\":\"pass\",\"findings\":[]} only if no actionable finding exists; otherwise use review=fail and list findings. Never echo this instruction as a result."
 	}
+	if m.Policy.CommitTaskChanges {
+		prompt += "\nCommit ownership override: the Runtime controller will validate allowed source paths and commit this task. Do not run git add or git commit. Leave permitted implementation edits in the assigned worktree for the controller. Read-only roles must leave no edits."
+	}
 	return prompt
 }
 
