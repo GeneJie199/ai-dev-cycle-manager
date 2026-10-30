@@ -3,6 +3,7 @@ package team
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -128,6 +129,27 @@ func TestReadyOnlyAfterDependencies(t *testing.T) {
 	ready = Ready(&m)
 	if len(ready) != 1 || ready[0] != 1 {
 		t.Fatal(ready)
+	}
+}
+
+func TestDAGReachabilityIsBoundedForSharedDependencies(t *testing.T) {
+	m := missionFixture()
+	chain := []Task{}
+	for i := 0; i < 60; i++ {
+		id := fmt.Sprintf("scan%d", i)
+		deps := []string{}
+		if i > 0 {
+			deps = append(deps, fmt.Sprintf("scan%d", i-1))
+		}
+		if i > 1 {
+			deps = append(deps, fmt.Sprintf("scan%d", i-2))
+		}
+		chain = append(chain, Task{ID: id, Role: "explorer", Prompt: "Scan", DependsOn: deps, MaxAttempts: 1})
+	}
+	m.Plan = append(chain, m.Plan...)
+	m.Plan[len(chain)+2].DependsOn = []string{"scan59", "build"}
+	if err := Validate(m); err != nil {
+		t.Fatal(err)
 	}
 }
 func TestRiskAndWriteBoundaries(t *testing.T) {

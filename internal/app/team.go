@@ -250,11 +250,9 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 	}
 	// All side effects follow the persisted claim. No custom Git orchestration is introduced.
 	if t.TaskID == "" {
-		source := m.Repository
-		for _, prior := range m.Plan {
-			if prior.State == "completed" && prior.Worktree != "" {
-				source = prior.Worktree
-			}
+		source, sourceErr := a.missionSource(ctx, m)
+		if sourceErr != nil {
+			return a.finishMissionTask(ctx, m, index, ei, sourceErr)
 		}
 		task, createErr := a.CreateTask(ctx, m.RequirementID, t.ID, t.Prompt)
 		err = createErr
@@ -337,6 +335,35 @@ func missionGit(ctx context.Context, dir string, args ...string) (string, error)
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
+}
+
+func (a *App) missionSource(ctx context.Context, m team.Mission) (string, error) {
+	for i := len(m.Executions) - 1; i >= 0; i-- {
+		e := m.Executions[i]
+		if e.Result != "completed" {
+			continue
+		}
+		source := e.Worktree
+		if source == "" && e.SessionID != "" {
+			s, err := a.Store.GetAgentSession(ctx, e.SessionID)
+			if err != nil {
+				return "", err
+			}
+			source = s.WorkingDir
+		}
+		if source == "" {
+			continue
+		}
+		head, err := missionGit(ctx, source, "rev-parse", "HEAD")
+		if err != nil {
+			return "", err
+		}
+		if e.Head != "" && head != e.Head {
+			return "", errors.New("accumulated source changed after execution evidence")
+		}
+		return source, nil
+	}
+	return m.Repository, nil
 }
 
 func (a *App) missionPrompt(ctx context.Context, m team.Mission, t team.Task) string {
@@ -426,6 +453,10 @@ func (a *App) finishMissionTask(ctx context.Context, m team.Mission, index, ei i
 			runErr = errors.New("read-only role changed the task branch")
 		}
 		t.ArtifactHead = head
+		branch, branchErr := missionGit(ctx, t.Worktree, "symbolic-ref", "--short", "HEAD")
+		if branchErr != nil || branch != t.Branch {
+			runErr = errors.New("agent left its assigned task branch")
+		}
 	}
 	if runErr == nil && t.Role == "qa" {
 		e.TestResult = "passed"
@@ -454,6 +485,8 @@ func (a *App) finishMissionTask(ctx context.Context, m team.Mission, index, ei i
 			runErr = errors.New("independent review did not return a clean structured verdict")
 		}
 	}
+	e.Worktree = t.Worktree
+	e.Head = t.ArtifactHead
 	status := "passed"
 	if runErr != nil {
 		status = "failed"
@@ -484,6 +517,11 @@ func (a *App) finishMissionTask(ctx context.Context, m team.Mission, index, ei i
 					m.FixCycles++
 					m.State = "retry"
 					m.Plan[j].State = "retry"
+					m.Plan[j].TaskID = ""
+					m.Plan[j].Worktree = ""
+					m.Plan[j].Branch = ""
+					m.Plan[j].Head = ""
+					m.Plan[j].ArtifactHead = ""
 					for k := range m.Plan {
 						r := &m.Plan[k]
 						if r.Role == "qa" || r.Role == "review" {
@@ -522,14 +560,25 @@ func reviewPassed(log string) bool {
 	count := 0
 	passed := true
 	for _, line := range strings.Split(log, "\n") {
-		var verdict struct {
-			Review   string   `json:"review"`
-			Findings []string `json:"findings"`
+		trimmed := strings.TrimSpace(line)
+		var fields map[string]json.RawMessage
+		if json.Unmarshal([]byte(trimmed), &fields) != nil {
+			if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"review"`) {
+				return false
+			}
+			continue
 		}
-		if json.Unmarshal([]byte(strings.TrimSpace(line)), &verdict) == nil && verdict.Review != "" {
-			count++
-			passed = passed && verdict.Review == "pass" && verdict.Findings != nil && len(verdict.Findings) == 0
+		raw, hasReview := fields["review"]
+		if !hasReview {
+			continue
 		}
+		count++
+		var review string
+		var findings []json.RawMessage
+		if json.Unmarshal(raw, &review) != nil || json.Unmarshal(fields["findings"], &findings) != nil {
+			return false
+		}
+		passed = passed && review == "pass" && findings != nil && len(findings) == 0
 	}
 	// Some CLI transports replay their final message. Identical clean verdicts are
 	// acceptable; any conflicting or non-clean verdict still fails closed.
@@ -537,6 +586,14 @@ func reviewPassed(log string) bool {
 }
 
 func (a *App) completeMission(ctx context.Context, m team.Mission) (team.Mission, error) {
+	finalSource, sourceErr := a.missionSource(ctx, m)
+	if sourceErr != nil {
+		return m, sourceErr
+	}
+	finalHead, sourceErr := missionGit(ctx, finalSource, "rev-parse", "HEAD")
+	if sourceErr != nil {
+		return m, sourceErr
+	}
 	for _, t := range m.Plan {
 		if t.State != "completed" {
 			return m, nil
@@ -553,6 +610,11 @@ func (a *App) completeMission(ctx context.Context, m team.Mission) (team.Mission
 			m.State = "escalated"
 			err = a.Team.Save(ctx, &m)
 			return m, err
+		}
+		if _, err := missionGit(ctx, finalSource, "merge-base", "--is-ancestor", t.ArtifactHead, finalHead); err != nil {
+			m.State = "escalated"
+			saveErr := a.Team.Save(ctx, &m)
+			return m, saveErr
 		}
 	}
 	tests := false

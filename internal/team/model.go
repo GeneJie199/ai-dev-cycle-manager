@@ -67,6 +67,8 @@ type Task struct {
 	ArtifactHead string   `json:"artifactHead"`
 }
 type Execution struct {
+	Worktree      string    `json:"worktree,omitempty"`
+	Head          string    `json:"head,omitempty"`
 	ID            string    `json:"id"`
 	TaskID        string    `json:"taskId"`
 	Agent         string    `json:"agent"`
@@ -207,9 +209,17 @@ func Validate(m Mission) error {
 		}
 	}
 	var ancestor func(string, string) bool
+	reachable := map[[2]string]bool{}
+	checked := map[[2]string]bool{}
 	ancestor = func(id, target string) bool {
+		key := [2]string{id, target}
+		if checked[key] {
+			return reachable[key]
+		}
+		checked[key] = true
 		for _, dep := range ids[id].DependsOn {
 			if dep == target || ancestor(dep, target) {
+				reachable[key] = true
 				return true
 			}
 		}
@@ -230,7 +240,7 @@ func Validate(m Mission) error {
 	}
 	seen := map[string]bool{}
 	for _, model := range m.Models {
-		if model.ID == "" || seen[model.ID] || model.Provider == "" || model.Adapter == "" || model.ContextLimit < 1 || model.Tier < 0 || model.Tier > 2 || !finite(model.Evaluation) || model.Evaluation > 1 || !all(Capabilities, model.Capabilities) || (model.CostPerMillion != nil && !finite(*model.CostPerMillion)) {
+		if model.ID == "" || len(model.ID) > 256 || strings.ContainsAny(model.ID, "{}\x00\r\n") || seen[model.ID] || model.Provider == "" || model.Adapter == "" || model.ContextLimit < 1 || model.Tier < 0 || model.Tier > 2 || !finite(model.Evaluation) || model.Evaluation > 1 || !all(Capabilities, model.Capabilities) || (model.CostPerMillion != nil && !finite(*model.CostPerMillion)) {
 			return errors.New("invalid or duplicate registry entry")
 		}
 		seen[model.ID] = true

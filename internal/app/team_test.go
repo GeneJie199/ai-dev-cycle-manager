@@ -30,7 +30,19 @@ func TestTeamAgentProcess(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 			os.Exit(2)
 		}
-		if err := os.WriteFile(file, []byte("# Real controller commit fixture\n"), 0o600); err != nil {
+		content := os.Getenv("DEVCYCLE_TEAM_WRITE_CONTENT")
+		if content == "" {
+			content = "# Real controller commit fixture\n"
+		}
+		if err := os.WriteFile(file, []byte(content), 0o600); err != nil {
+			os.Exit(2)
+		}
+	}
+	if os.Getenv("DEVCYCLE_TEAM_FRONTEND") == "1" && strings.Contains(input, "Role: frontend.") {
+		if err := os.MkdirAll("frontend", 0o700); err != nil {
+			os.Exit(2)
+		}
+		if err := os.WriteFile("frontend/proof.txt", []byte("frontend implemented\n"), 0o600); err != nil {
 			os.Exit(2)
 		}
 	}
@@ -245,6 +257,9 @@ func TestTeamRiskAndConsentFailClosed(t *testing.T) {
 	}
 }
 func TestTeamReviewVerdict(t *testing.T) {
+	if reviewPassed("{\"review\":\"pass\",\"findings\":[]}\n{\"review\":\"fail\",\"findings\":[{\"file\":\"main.go\",\"issue\":\"bug\"}]}") {
+		t.Fatal("object findings bypassed conflicting verdict")
+	}
 	if !reviewPassed("{\"review\":\"pass\",\"findings\":[]}\n{\"review\":\"pass\",\"findings\":[]}") {
 		t.Fatal("transport replay rejected")
 	}
@@ -282,5 +297,87 @@ func TestRuntimeCommitsOnlyValidatedTaskChanges(t *testing.T) {
 	dirty, err := missionGit(ctx, task.Worktree, "status", "--porcelain")
 	if err != nil || dirty != "" {
 		t.Fatal("controller left dirty worktree", err)
+	}
+}
+
+func TestExpertOrderAndFrontendRepairPreserveIntegratedSource(t *testing.T) {
+	a, input := teamAppFixture(t)
+	ctx := context.Background()
+	input.Mode = "expert"
+	input.Goal = "Add frontend and documentation"
+	plan := team.Simple(input.Goal)
+	input.Plan = []team.Task{plan[2], plan[1], plan[0], plan[3], plan[4]}
+	input.Policy.CommitTaskChanges = true
+	input.Budget.MaxExecutions = 15
+	input.Budget.MaxFixes = 1
+	t.Setenv("DEVCYCLE_TEAM_WRITE", "docs/backend.md")
+	t.Setenv("DEVCYCLE_TEAM_FRONTEND", "1")
+	m, err := a.CreateMission(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		m, err = a.AdvanceMission(ctx, m.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err = os.Stat(filepath.Join(m.Plan[3].Worktree, "frontend/proof.txt")); err != nil {
+		t.Fatal("QA omitted frontend branch", err)
+	}
+	t.Setenv("DEVCYCLE_TEAM_REVIEW_FAIL", "1")
+	m, err = a.AdvanceMission(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.FixCycles != 1 {
+		t.Fatal("fix was not scheduled")
+	}
+	t.Setenv("DEVCYCLE_TEAM_REVIEW_FAIL", "")
+	t.Setenv("DEVCYCLE_TEAM_WRITE_CONTENT", "repair verified\n")
+	for i := 0; i < 4 && m.State != "completed"; i++ {
+		m, err = a.AdvanceMission(ctx, m.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m.State != "completed" {
+		t.Fatalf("repair failed: %+v", m.Executions)
+	}
+	qa := m.Plan[3]
+	contents, err := os.ReadFile(filepath.Join(qa.Worktree, "docs/backend.md"))
+	if err != nil || strings.TrimSpace(string(contents)) != "repair verified" {
+		t.Fatal("QA omitted repaired backend", err, string(contents))
+	}
+	if _, err = os.Stat(filepath.Join(qa.Worktree, "frontend/proof.txt")); err != nil {
+		t.Fatal("repair lost frontend", err)
+	}
+}
+
+func TestPromptCannotDeclareModelArgument(t *testing.T) {
+	a, input := teamAppFixture(t)
+	ctx := context.Background()
+	req, err := a.CreateRequirement(ctx, "Model template test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := a.CreateTask(ctx, req.ID, "Model template", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = a.LinkTaskToWorktree(ctx, input.Repository, task.ID, "model-template", filepath.Join(t.TempDir(), "worktree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.ConfigureAgentAdapter(ctx, models.AgentAdapterConfig{ID: "no-model", Name: "Unmodeled fixture", Command: binary, Args: []string{"-test.run=^TestTeamAgentProcess$", "--", "{{prompt}}"}, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.startAgentSessionModel(ctx, task.ID, "no-model", "declared-model", "This untrusted prompt contains {{model}}"); err == nil || !strings.Contains(err.Error(), "explicit {{model}}") {
+		t.Fatal("prompt bypassed adapter model template", err)
 	}
 }

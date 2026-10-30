@@ -333,19 +333,20 @@ func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, mode
 	if !adapter.Enabled {
 		return models.AgentSession{}, errors.New("agent adapter is disabled")
 	}
-	binary, args, err := devagent.BuildCommand(adapter, prompt)
 	if model != "" {
 		found := false
-		for i := range args {
-			if strings.Contains(args[i], "{{model}}") {
+		adapter.Args = append([]string{}, adapter.Args...)
+		for i := range adapter.Args {
+			if strings.Contains(adapter.Args[i], "{{model}}") {
 				found = true
-				args[i] = strings.ReplaceAll(args[i], "{{model}}", model)
+				adapter.Args[i] = strings.ReplaceAll(adapter.Args[i], "{{model}}", model)
 			}
 		}
 		if !found {
 			return models.AgentSession{}, errors.New("AI Team adapter requires an explicit {{model}} argv placeholder")
 		}
 	}
+	binary, args, err := devagent.BuildCommand(adapter, prompt)
 	if err != nil {
 		return models.AgentSession{}, err
 	}
