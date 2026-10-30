@@ -14,6 +14,8 @@ branch and an existing managed Agent session. Context handoffs use the existing
 durable handoff service. Source is inherited serially from the last completed task's
 commit; this initial local scheduler does not run parallel implementation branches.
 
+Expert may configure `worktreeRoot`, `branchPrefix`, context, budget, test commands and an independently modeled review policy.
+
 `POST /api/team/missions` creates a validated mission. `POST .../{id}/advance` claims
 and executes at most one ready task; clients can loop to completion/escalation. The
 page does this automatically. GET endpoints never start execution. Repeated advances

@@ -7,11 +7,11 @@ coding, reasoning, planning, frontend, vision, long_context, review, testing,
 exploration and low_cost. Unknown/duplicate entries and malformed DAG/config fail
 validation. Business workflows contain no vendor-name branches.
 
-An AI Team adapter must contain exactly one `{{prompt}}` and an explicit `{{model}}`
+An AI Team adapter must contain exactly one `{{prompt}}` or `{{prompt_stdin}}` and an explicit `{{model}}`
 in argv; model selection is substituted into argv, never a shell string. Existing
 standalone adapters retain their behavior. Configure a model-aware adapter in the
 existing DevCycle settings, for example command `codex`, args
-`["exec", "--model", "{{model}}", "--sandbox", "workspace-write", "{{prompt}}"]`.
+`["exec", "--model", "{{model}}", "--sandbox", "workspace-write", "{{prompt_stdin}}"]`.
 Equivalent Kimi/DeepSeek/Claude/local adapters use their actual CLI syntax or an
 explicitly configured agent; no provider credential is stored in a registry entry.
 This is configuration support, not a claim each vendor has been live-tested here.
@@ -33,3 +33,5 @@ Explicit provider configuration and OS-keyring/environment secret storage, maski
 replacement, revocation, connection tests and redacted preview reuse v1 services.
 Source export is disabled unless the mission explicitly allows its registered provider. A CLI labeled local still needs explicit source/network consent unless an enforcing no-network executor exists; client labels cannot bypass consent.
 Tool/network sandbox capability cannot be self-attested by client registry metadata.
+
+Use `{{prompt_stdin}}` for large contexts: it expands to `-` and streams the prompt to stdin without shell interpolation or Windows argv limits. The configured CLI must support this stdin convention. Existing `{{prompt}}` argv adapters remain supported.
