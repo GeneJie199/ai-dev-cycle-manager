@@ -8,7 +8,7 @@ import (
 )
 
 func missionFixture() Mission {
-	return Mission{ProjectID: "project", Repository: "repo", Goal: "Add quickstart", Mode: "simple", Risk: 1, Plan: Simple("Add quickstart"), Checks: []string{"go test ./..."}, Acceptance: []string{"tests pass"}, Models: []Model{{ID: "strong", Provider: "local", Adapter: "agent", Capabilities: Capabilities, ContextLimit: 100000, Tier: 2, Available: true, Tools: true}}, Budget: Budget{MaxExecutions: 12, TimeoutSeconds: 60}, Policy: Policy{AllowedProviders: []string{"local"}}}
+	return Mission{ProjectID: "project", Repository: "repo", Goal: "Add quickstart", Mode: "simple", Risk: 1, Plan: Simple("Add quickstart"), Checks: []string{"go test ./..."}, Acceptance: []string{"tests pass"}, Models: []Model{{ID: "strong", Provider: "local", Adapter: "agent", Capabilities: Capabilities, ContextLimit: 100000, Tier: 2, Available: true, Tools: true}}, Budget: Budget{MaxExecutions: 12, TimeoutSeconds: 60}, Policy: Policy{AllowedProviders: []string{"local"}, SourceExport: true}}
 }
 func TestValidateDAGAndRegistry(t *testing.T) {
 	tests := []struct {
@@ -102,6 +102,7 @@ func TestRoutePoliciesFallbackAndBudgets(t *testing.T) {
 	m.Models[0].Provider = "remote"
 	m.Models = m.Models[:1]
 	m.Policy.AllowedProviders = []string{"remote"}
+	m.Policy.SourceExport = false
 	if _, err = Route(m, task, available); err == nil {
 		t.Fatal("implicit source export")
 	}

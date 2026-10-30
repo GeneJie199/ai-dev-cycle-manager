@@ -31,5 +31,5 @@ must reserve worst-case usage before requests and settle measured usage afterwar
 
 Explicit provider configuration and OS-keyring/environment secret storage, masking,
 replacement, revocation, connection tests and redacted preview reuse v1 services.
-Source export is disabled unless the mission explicitly allows its registered provider.
+Source export is disabled unless the mission explicitly allows its registered provider. A CLI labeled local still needs explicit source/network consent unless an enforcing no-network executor exists; client labels cannot bypass consent.
 Tool/network sandbox capability cannot be self-attested by client registry metadata.

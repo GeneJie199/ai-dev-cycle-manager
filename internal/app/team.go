@@ -90,6 +90,19 @@ func (a *App) CreateMission(ctx context.Context, m team.Mission) (team.Mission, 
 		}
 	}
 	m.ID = uuid.NewString()
+	if m.WorktreeRoot == "" {
+		m.WorktreeRoot = filepath.Join(filepath.Dir(a.DBPath), "team-worktrees")
+	}
+	m.WorktreeRoot, err = filepath.Abs(m.WorktreeRoot)
+	if err != nil {
+		return m, err
+	}
+	if m.BranchPrefix == "" {
+		m.BranchPrefix = "team"
+	}
+	if _, err = missionGit(ctx, m.Repository, "check-ref-format", "--branch", m.BranchPrefix+"/task"); err != nil {
+		return m, validationf("invalid branchPrefix")
+	}
 	m.Spec = team.Spec
 	m.State = "pending"
 	m.Created = time.Now().UTC()
@@ -193,6 +206,25 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 		t.ContextSize = len(prompt)
 	}
 	choices, routeErr := team.Route(m, *t, available)
+	if routeErr == nil && t.Role == "review" {
+		authors := map[string]bool{}
+		for _, run := range m.Executions {
+			if run.Agent == "lead" || run.Agent == "frontend" {
+				authors[run.Provider+"/"+run.Model] = true
+			}
+		}
+		independent := []team.Model{}
+		for _, candidate := range choices {
+			if !authors[candidate.Provider+"/"+candidate.ID] {
+				independent = append(independent, candidate)
+			}
+		}
+		if len(independent) > 0 {
+			choices = independent
+		} else if m.Policy.RequireDifferentReviewModel {
+			routeErr = errors.New("review policy requires a model independent of implementation")
+		}
+	}
 	if routeErr != nil {
 		t.State = "escalated"
 		m.State = "escalated"
@@ -223,8 +255,8 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 		if err == nil {
 			t.TaskID = task.ID
 			ownedID := t.ID + "-" + task.ID[:8]
-			t.Branch = "team/" + m.ID + "/" + ownedID
-			t.Worktree = filepath.Join(filepath.Dir(a.DBPath), "team-worktrees", m.ID, ownedID)
+			t.Branch = m.BranchPrefix + "/" + m.ID + "/" + ownedID
+			t.Worktree = filepath.Join(m.WorktreeRoot, m.ID, ownedID)
 			_, _, err = a.LinkTaskToWorktree(ctx, source, t.TaskID, t.Branch, t.Worktree)
 		}
 	}
@@ -481,7 +513,7 @@ func (a *App) finishMissionTask(ctx context.Context, m team.Mission, index, ei i
 
 func reviewPassed(log string) bool {
 	count := 0
-	passed := false
+	passed := true
 	for _, line := range strings.Split(log, "\n") {
 		var verdict struct {
 			Review   string   `json:"review"`
@@ -489,10 +521,12 @@ func reviewPassed(log string) bool {
 		}
 		if json.Unmarshal([]byte(strings.TrimSpace(line)), &verdict) == nil && verdict.Review != "" {
 			count++
-			passed = verdict.Review == "pass" && verdict.Findings != nil && len(verdict.Findings) == 0
+			passed = passed && verdict.Review == "pass" && verdict.Findings != nil && len(verdict.Findings) == 0
 		}
 	}
-	return count == 1 && passed
+	// Some CLI transports replay their final message. Identical clean verdicts are
+	// acceptable; any conflicting or non-clean verdict still fails closed.
+	return count >= 1 && passed
 }
 
 func (a *App) completeMission(ctx context.Context, m team.Mission) (team.Mission, error) {

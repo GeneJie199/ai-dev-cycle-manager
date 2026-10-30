@@ -135,7 +135,7 @@ func teamAppFixture(t *testing.T) (*App, team.Mission) {
 		t.Fatal(err)
 	}
 	check := "git status --porcelain"
-	m := team.Mission{Repository: repo, Goal: "Document the team workflow", Mode: "simple", Checks: []string{check}, Models: []team.Model{{ID: "fixture", Provider: "local", Adapter: "team-test", Capabilities: team.Capabilities, ContextLimit: 100000, Tier: 2, Available: true, Tools: true}}, Policy: team.Policy{TrustedLocalCLI: true, AllowedProviders: []string{"local"}}, Budget: team.Budget{MaxExecutions: 10, TimeoutSeconds: 10}}
+	m := team.Mission{Repository: repo, Goal: "Document the team workflow", Mode: "simple", Checks: []string{check}, Models: []team.Model{{ID: "fixture", Provider: "local", Adapter: "team-test", Capabilities: team.Capabilities, ContextLimit: 100000, Tier: 2, Available: true, Tools: true}}, Policy: team.Policy{TrustedLocalCLI: true, SourceExport: true, AllowedProviders: []string{"local"}}, Budget: team.Budget{MaxExecutions: 10, TimeoutSeconds: 10}}
 	return a, m
 }
 func TestTeamMissionProcessIntegration(t *testing.T) {

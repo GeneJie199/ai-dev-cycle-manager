@@ -42,10 +42,11 @@ type Budget struct {
 	TimeoutSeconds int      `json:"timeoutSeconds"`
 }
 type Policy struct {
-	CommitTaskChanges   bool     `json:"commitTaskChanges"`
-	AllowedProviders    []string `json:"allowedProviders"`
-	SourceExport        bool     `json:"sourceExport"`
-	RequiredEnforcement []string `json:"requiredEnforcement"`
+	RequireDifferentReviewModel bool     `json:"requireDifferentReviewModel"`
+	CommitTaskChanges           bool     `json:"commitTaskChanges"`
+	AllowedProviders            []string `json:"allowedProviders"`
+	SourceExport                bool     `json:"sourceExport"`
+	RequiredEnforcement         []string `json:"requiredEnforcement"`
 	// TrustedLocalCLI explicitly permits CLI tools with the user's own OS privileges.
 	TrustedLocalCLI bool `json:"trustedLocalCLI"`
 }
@@ -87,6 +88,8 @@ type Execution struct {
 	Error         string    `json:"error,omitempty"`
 }
 type Mission struct {
+	WorktreeRoot      string      `json:"worktreeRoot"`
+	BranchPrefix      string      `json:"branchPrefix"`
 	FixCycles         int         `json:"fixCycles"`
 	Spec              string      `json:"spec"`
 	ID                string      `json:"id"`
@@ -258,7 +261,7 @@ func Route(m Mission, t Task, available map[string]bool) ([]Model, error) {
 		if !model.Available || !available[model.Adapter] || !Contains(m.Policy.AllowedProviders, model.Provider) || !model.Tools || model.Tier < minTier || model.ContextLimit < t.ContextSize || !all(model.Capabilities, t.Capabilities) || !all(model.EnforcedPolicies, m.Policy.RequiredEnforcement) {
 			continue
 		}
-		if !m.Policy.SourceExport && model.Provider != "local" {
+		if !m.Policy.SourceExport && !Contains(model.EnforcedPolicies, "no_network") {
 			continue
 		}
 		out = append(out, model)
@@ -372,12 +375,19 @@ func Writable(role, file string) bool {
 }
 
 func Simple(goal string) []Task {
-	return []Task{
+	plan := []Task{
 		{ID: "analysis", Role: "explorer", Prompt: "Read the repository and report constraints and impact for: " + goal, Capabilities: []string{"exploration"}, MaxAttempts: 3},
 		{ID: "build", Role: "lead", Prompt: "Implement the goal, inspect project memory and analysis. Commit changes only on this task branch. Goal: " + goal, DependsOn: []string{"analysis"}, Capabilities: []string{"coding"}, MaxAttempts: 3},
 		{ID: "tests", Role: "qa", Prompt: "Run the project checks; report regressions and evidence. Do not change implementation. Goal: " + goal, DependsOn: []string{"build"}, Capabilities: []string{"testing"}, MaxAttempts: 3},
 		{ID: "review", Role: "review", Prompt: "Independently review the committed goal and test evidence. Report findings with file references; do not change files. Goal: " + goal, DependsOn: []string{"tests"}, Capabilities: []string{"review"}, MaxAttempts: 3},
 	}
+	text := strings.ToLower(goal)
+	if strings.Contains(text, "frontend") || strings.Contains(text, "前端") || strings.Contains(text, "界面") || strings.Contains(text, "user interface") {
+		frontend := Task{ID: "frontend", Role: "frontend", Prompt: "Implement frontend and UX only in allowed frontend paths. Report backend/API gaps to lead; never change backend. Goal: " + goal, DependsOn: []string{"build"}, Capabilities: []string{"frontend"}, MaxAttempts: 3}
+		plan = append(plan[:2], append([]Task{frontend}, plan[2:]...)...)
+		plan[3].DependsOn = []string{"frontend"}
+	}
+	return plan
 }
 
 // Extension is a public boundary; Community has no enterprise implementation dependency.
