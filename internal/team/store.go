@@ -13,17 +13,35 @@ import (
 
 var ErrConflict = errors.New("revision conflict; reload before retry")
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db    *sql.DB
+	lease *os.File
+}
 
 // Open uses a separate database: v1 binaries retain their original schema and rollback path.
 func Open(file string) (*Store, error) {
+	lease, err := os.OpenFile(file+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err = lockStore(lease); err != nil {
+		_ = lease.Close()
+		return nil, fmt.Errorf("team store already in use: %w", err)
+	}
 	db, err := sql.Open("sqlite", file)
 	if err != nil {
+		_ = unlockStore(lease)
+		_ = lease.Close()
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(0)
-	fail := func(e error) (*Store, error) { _ = db.Close(); return nil, e }
+	fail := func(e error) (*Store, error) {
+		_ = db.Close()
+		_ = unlockStore(lease)
+		_ = lease.Close()
+		return nil, e
+	}
 	if _, err = db.Exec(`PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;`); err != nil {
 		return fail(err)
 	}
@@ -41,9 +59,14 @@ func Open(file string) (*Store, error) {
 	if err = os.Chmod(file, 0o600); err != nil {
 		return fail(err)
 	}
-	return &Store{db}, nil
+	return &Store{db: db, lease: lease}, nil
 }
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	err := s.db.Close()
+	_ = unlockStore(s.lease)
+	_ = s.lease.Close()
+	return err
+}
 func (s *Store) Save(ctx context.Context, m *Mission) error {
 	previous := m.Revision
 	m.Revision++

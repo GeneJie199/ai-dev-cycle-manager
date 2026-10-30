@@ -18,6 +18,7 @@ import (
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/app"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/git"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
+	"github.com/GeneJie199/ai-dev-cycle-manager/internal/team"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/web"
 )
 
@@ -35,6 +36,9 @@ func main() {
 	switch cmd {
 	case "version", "--version":
 		fmt.Println(version)
+	case "license", "about":
+		b, _ := json.MarshalIndent(team.BuildAbout(), "", "  ")
+		fmt.Println(string(b))
 	case "demo":
 		if err := runDemo(ctx, args); err != nil {
 			fatal(err)

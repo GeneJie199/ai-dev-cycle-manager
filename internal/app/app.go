@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,10 @@ import (
 // App is the backend façade. Wails can bind exported methods on this type later.
 type App struct {
 	Team           *team.Store
+	teamOnce       sync.Once
+	teamErr        error
+	teamMu         sync.Mutex
+	teamActive     map[string]bool
 	Store          *store.Store
 	Git            *git.CLIRunner
 	Codex          agent.CodexAdapter // optional; nil until a real adapter is injected
@@ -54,31 +59,43 @@ func New(dbPath string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	var restoredTeam *team.Store
+	if _, statErr := os.Stat(abs + ".team.db"); statErr == nil {
+		restoredTeam, err = team.Open(abs + ".team.db")
+		if err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+	}
 	if err = st.RecoverRunningAgentSessions(context.Background()); err != nil {
+		if restoredTeam != nil {
+			_ = restoredTeam.Close()
+		}
 		_ = st.Close()
 		return nil, err
 	}
 	if err = st.RecoverRunningVerificationRuns(context.Background()); err != nil {
+		if restoredTeam != nil {
+			_ = restoredTeam.Close()
+		}
 		_ = st.Close()
 		return nil, err
 	}
 	aiService := devai.NewService()
 	aiService.Configs = st
 	aiService.Secrets = devai.NewKeyringSecretStore()
-	teamStore, err := team.Open(abs + ".team.db")
-	if err != nil {
-		_ = st.Close()
-		return nil, err
-	}
-	return &App{
-		Team:          teamStore,
+	a := &App{
 		Store:         st,
 		Git:           git.NewCLIRunner(),
 		AI:            aiService,
 		DBPath:        abs,
 		processes:     map[string]*runningAgent{},
 		verifications: map[string]*runningVerification{},
-	}, nil
+	}
+	if restoredTeam != nil {
+		a.teamOnce.Do(func() { a.Team = restoredTeam; a.teamActive = map[string]bool{} })
+	}
+	return a, nil
 }
 
 // Close releases resources.

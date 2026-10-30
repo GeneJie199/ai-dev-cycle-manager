@@ -19,8 +19,85 @@ func TestTeamAgentProcess(t *testing.T) {
 	if os.Getenv("DEVCYCLE_TEAM_FAIL") == "1" {
 		os.Exit(1)
 	}
+	if os.Getenv("DEVCYCLE_TEAM_SLOW") == "1" {
+		time.Sleep(400 * time.Millisecond)
+	}
+	if os.Getenv("DEVCYCLE_TEAM_REVIEW_FAIL") == "1" {
+		println(`{"review":"fail","findings":["missing regression coverage"]}`)
+		os.Exit(0)
+	}
 	println(`{"review":"pass","findings":[]}`)
 	os.Exit(0)
+}
+
+func TestTeamConcurrentAdvanceAndStoreOwnership(t *testing.T) {
+	a, input := teamAppFixture(t)
+	ctx := context.Background()
+	t.Setenv("DEVCYCLE_TEAM_SLOW", "1")
+	m, err := a.CreateMission(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other, err := team.Open(a.DBPath + ".team.db"); err == nil {
+		_ = other.Close()
+		t.Fatal("concurrent runtime opened team store")
+	}
+	finished := make(chan error, 1)
+	go func() { _, err := a.AdvanceMission(ctx, m.ID); finished <- err }()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot, err := a.Team.Get(ctx, m.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.State == "running" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err = a.AdvanceMission(ctx, m.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-finished; err != nil {
+		t.Fatal(err)
+	}
+	m, err = a.Team.Get(ctx, m.ID)
+	if err != nil || len(m.Executions) != 1 {
+		t.Fatal("duplicate dispatch", m, err)
+	}
+}
+
+func TestTeamReviewFixRegressionCycle(t *testing.T) {
+	a, input := teamAppFixture(t)
+	ctx := context.Background()
+	m, err := a.CreateMission(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		m, err = a.AdvanceMission(ctx, m.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("DEVCYCLE_TEAM_REVIEW_FAIL", "1")
+	m, err = a.AdvanceMission(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.FixCycles != 1 || m.Plan[1].State != "retry" || m.State != "retry" {
+		t.Fatalf("review did not hand back to lead: %+v", m)
+	}
+	t.Setenv("DEVCYCLE_TEAM_REVIEW_FAIL", "")
+	for i := 0; i < 4 && m.State != "completed"; i++ {
+		m, err = a.AdvanceMission(ctx, m.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if m.State != "completed" || len(m.Executions) != 7 {
+		t.Fatalf("repair not regression-verified: %s, %+v", m.State, m.Executions)
+	}
 }
 func teamAppFixture(t *testing.T) (*App, team.Mission) {
 	t.Helper()

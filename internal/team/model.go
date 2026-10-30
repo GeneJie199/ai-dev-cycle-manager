@@ -4,6 +4,7 @@ package team
 import (
 	"errors"
 	"fmt"
+	extensions "github.com/GeneJie199/ai-dev-cycle-manager/api/extensions/v2"
 	"math"
 	"path"
 	"regexp"
@@ -34,12 +35,14 @@ type Model struct {
 	Evaluation       float64  `json:"evaluation"`
 }
 type Budget struct {
+	MaxFixes       int      `json:"maxFixes"`
 	MaxExecutions  int      `json:"maxExecutions"`
 	MaxTokens      int      `json:"maxTokens"`
 	MaxCost        *float64 `json:"maxCost"`
 	TimeoutSeconds int      `json:"timeoutSeconds"`
 }
 type Policy struct {
+	CommitTaskChanges   bool     `json:"commitTaskChanges"`
 	AllowedProviders    []string `json:"allowedProviders"`
 	SourceExport        bool     `json:"sourceExport"`
 	RequiredEnforcement []string `json:"requiredEnforcement"`
@@ -84,6 +87,7 @@ type Execution struct {
 	Error         string    `json:"error,omitempty"`
 }
 type Mission struct {
+	FixCycles         int         `json:"fixCycles"`
 	Spec              string      `json:"spec"`
 	ID                string      `json:"id"`
 	ProjectID         string      `json:"projectId"`
@@ -149,6 +153,9 @@ func Validate(m Mission) error {
 	}
 	if m.Budget.MaxExecutions < 1 || m.Budget.MaxExecutions > 300 || m.Budget.TimeoutSeconds < 1 || m.Budget.TimeoutSeconds > 1800 || m.Budget.MaxTokens < 0 || (m.Budget.MaxCost != nil && !finite(*m.Budget.MaxCost)) {
 		return errors.New("invalid budget")
+	}
+	if m.Budget.MaxFixes < 0 || m.Budget.MaxFixes > 3 {
+		return errors.New("invalid fix cycle bound")
 	}
 	if len(m.Checks) == 0 || len(m.Checks) > 20 || len(m.Acceptance) == 0 {
 		return errors.New("machine checks and acceptance are required")
@@ -367,20 +374,13 @@ func Writable(role, file string) bool {
 func Simple(goal string) []Task {
 	return []Task{
 		{ID: "analysis", Role: "explorer", Prompt: "Read the repository and report constraints and impact for: " + goal, Capabilities: []string{"exploration"}, MaxAttempts: 3},
-		{ID: "build", Role: "lead", Prompt: "Implement the goal, inspect project memory and analysis. Commit changes only on this task branch. Goal: " + goal, DependsOn: []string{"analysis"}, Capabilities: []string{"coding"}, MaxAttempts: 1},
+		{ID: "build", Role: "lead", Prompt: "Implement the goal, inspect project memory and analysis. Commit changes only on this task branch. Goal: " + goal, DependsOn: []string{"analysis"}, Capabilities: []string{"coding"}, MaxAttempts: 3},
 		{ID: "tests", Role: "qa", Prompt: "Run the project checks; report regressions and evidence. Do not change implementation. Goal: " + goal, DependsOn: []string{"build"}, Capabilities: []string{"testing"}, MaxAttempts: 3},
-		{ID: "review", Role: "review", Prompt: "Independently review the committed goal and test evidence. Report findings with file references; do not change files. Goal: " + goal, DependsOn: []string{"tests"}, Capabilities: []string{"review"}, MaxAttempts: 1},
+		{ID: "review", Role: "review", Prompt: "Independently review the committed goal and test evidence. Report findings with file references; do not change files. Goal: " + goal, DependsOn: []string{"tests"}, Capabilities: []string{"review"}, MaxAttempts: 3},
 	}
 }
 
 // Extension is a public boundary; Community has no enterprise implementation dependency.
-type Extension interface {
-	ID() string
-	Capabilities() []string
-}
-type Entitlements interface {
-	Allowed(projectID, capability string) bool
-}
-type CommunityEntitlements struct{}
-
-func (CommunityEntitlements) Allowed(string, string) bool { return true }
+type Extension = extensions.Extension
+type Entitlements = extensions.Entitlements
+type CommunityEntitlements = extensions.CommunityEntitlements

@@ -9,7 +9,22 @@ import (
 )
 
 func (s *Server) registerTeamRoutes() {
-	s.mux.HandleFunc("GET /api/team/missions", func(w http.ResponseWriter, r *http.Request) {
+	s.mux.HandleFunc("GET /api/team/about", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, team.BuildAbout()) })
+	s.mux.HandleFunc("GET /api/team/license", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(team.LicenseText))
+	})
+	// Lazily open the sidecar: v1-only sessions do not create or migrate team state.
+	handle := func(pattern string, h http.HandlerFunc) {
+		s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			if _, err := s.app.TeamStore(); err != nil {
+				s.fail(w, err)
+				return
+			}
+			h(w, r)
+		})
+	}
+	handle("GET /api/team/missions", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.app.Team.List(r.Context())
 		if err != nil {
 			s.fail(w, err)
@@ -17,7 +32,7 @@ func (s *Server) registerTeamRoutes() {
 		}
 		writeJSON(w, 200, v)
 	})
-	s.mux.HandleFunc("POST /api/team/missions", func(w http.ResponseWriter, r *http.Request) {
+	handle("POST /api/team/missions", func(w http.ResponseWriter, r *http.Request) {
 		if !teamOrigin(w, r) {
 			return
 		}
@@ -32,7 +47,7 @@ func (s *Server) registerTeamRoutes() {
 		}
 		writeJSON(w, 201, v)
 	})
-	s.mux.HandleFunc("GET /api/team/missions/{id}", func(w http.ResponseWriter, r *http.Request) {
+	handle("GET /api/team/missions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.app.Team.Get(r.Context(), r.PathValue("id"))
 		if err != nil {
 			s.fail(w, err)
@@ -40,7 +55,7 @@ func (s *Server) registerTeamRoutes() {
 		}
 		writeJSON(w, 200, v)
 	})
-	s.mux.HandleFunc("POST /api/team/missions/{id}/advance", func(w http.ResponseWriter, r *http.Request) {
+	handle("POST /api/team/missions/{id}/advance", func(w http.ResponseWriter, r *http.Request) {
 		if !teamOrigin(w, r) {
 			return
 		}
@@ -51,7 +66,7 @@ func (s *Server) registerTeamRoutes() {
 		}
 		writeJSON(w, 200, v)
 	})
-	s.mux.HandleFunc("POST /api/team/missions/{id}/retry", func(w http.ResponseWriter, r *http.Request) {
+	handle("POST /api/team/missions/{id}/retry", func(w http.ResponseWriter, r *http.Request) {
 		if !teamOrigin(w, r) {
 			return
 		}
@@ -62,7 +77,7 @@ func (s *Server) registerTeamRoutes() {
 		}
 		writeJSON(w, 200, v)
 	})
-	s.mux.HandleFunc("GET /api/team/memory/{project}", func(w http.ResponseWriter, r *http.Request) {
+	handle("GET /api/team/memory/{project}", func(w http.ResponseWriter, r *http.Request) {
 		v, err := s.app.Team.Memory(r.Context(), r.PathValue("project"), r.URL.Query().Get("history") == "true")
 		if err != nil {
 			s.fail(w, err)
@@ -70,7 +85,7 @@ func (s *Server) registerTeamRoutes() {
 		}
 		writeJSON(w, 200, v)
 	})
-	s.mux.HandleFunc("PUT /api/team/memory/{project}", func(w http.ResponseWriter, r *http.Request) {
+	handle("PUT /api/team/memory/{project}", func(w http.ResponseWriter, r *http.Request) {
 		if !teamOrigin(w, r) {
 			return
 		}
@@ -86,10 +101,10 @@ func (s *Server) registerTeamRoutes() {
 		}
 		writeJSON(w, 200, out)
 	})
-	s.mux.HandleFunc("GET /api/team/projects/{project}/status", func(w http.ResponseWriter, r *http.Request) {
+	handle("GET /api/team/projects/{project}/status", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, app.TeamProjectStatus(r.PathValue("project")))
 	})
-	s.mux.HandleFunc("GET /api/team/evaluations", func(w http.ResponseWriter, r *http.Request) {
+	handle("GET /api/team/evaluations", func(w http.ResponseWriter, r *http.Request) {
 		missions, err := s.app.Team.List(r.Context())
 		if err != nil {
 			s.fail(w, err)
