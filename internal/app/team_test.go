@@ -256,6 +256,28 @@ func TestTeamRiskAndConsentFailClosed(t *testing.T) {
 		t.Fatal("R4 ran automatically")
 	}
 }
+
+func TestExhaustedRetryStaysEscalated(t *testing.T) {
+	a, input := teamAppFixture(t)
+	ctx := context.Background()
+	m, err := a.CreateMission(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.State = "escalated"
+	m.Plan[0].State = "escalated"
+	m.Plan[0].Attempts = m.Plan[0].MaxAttempts
+	if err = a.Team.Save(ctx, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.RetryMission(ctx, m.ID); err == nil {
+		t.Fatal("exhausted retry became an advancing loop")
+	}
+	stored, err := a.Team.Get(ctx, m.ID)
+	if err != nil || stored.State != "escalated" {
+		t.Fatal("retry mutated terminal state", err)
+	}
+}
 func TestTeamReviewVerdict(t *testing.T) {
 	if reviewPassed("{\"review\":\"pass\",\"findings\":[]}\n{\"review\":\"fail\",\"findings\":[{\"file\":\"main.go\",\"issue\":\"bug\"}]}") {
 		t.Fatal("object findings bypassed conflicting verdict")

@@ -702,11 +702,16 @@ func (a *App) RetryMission(ctx context.Context, id string) (team.Mission, error)
 	if m.State != "escalated" {
 		return m, validationf("only escalated missions may be retried")
 	}
+	retryable := false
 	for i := range m.Plan {
 		t := &m.Plan[i]
 		if t.State == "escalated" && t.Attempts < t.MaxAttempts {
 			t.State = "retry"
+			retryable = true
 		}
+	}
+	if !retryable {
+		return m, validationf("no retryable task attempts remain")
 	}
 	m.State = "retry"
 	err = a.Team.Save(ctx, &m)
