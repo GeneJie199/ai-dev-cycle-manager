@@ -364,6 +364,12 @@ func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, mode
 		return models.AgentSession{}, err
 	}
 	cmd := exec.CommandContext(context.Background(), path, args...)
+	for _, argument := range adapter.Args {
+		if strings.Contains(argument, devagent.StdinPromptPlaceholder) {
+			cmd.Stdin = strings.NewReader(prompt)
+			break
+		}
+	}
 	cmd.Dir = task.WorktreePath
 	prepareManagedCommand(cmd)
 	cmd.Stdout = logFile

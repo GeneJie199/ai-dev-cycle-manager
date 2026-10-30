@@ -2,8 +2,10 @@ package app
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +17,22 @@ import (
 func TestTeamAgentProcess(t *testing.T) {
 	if os.Getenv("DEVCYCLE_TEAM_HELPER") != "1" {
 		return
+	}
+	input := ""
+	if os.Args[len(os.Args)-1] == "-" {
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+		if err != nil || len(data) == 0 {
+			os.Exit(2)
+		}
+		input = string(data)
+	}
+	if file := os.Getenv("DEVCYCLE_TEAM_WRITE"); file != "" && strings.Contains(input, "Role: lead.") {
+		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+			os.Exit(2)
+		}
+		if err := os.WriteFile(file, []byte("# Real controller commit fixture\n"), 0o600); err != nil {
+			os.Exit(2)
+		}
 	}
 	if os.Getenv("DEVCYCLE_TEAM_FAIL") == "1" {
 		os.Exit(1)
@@ -130,7 +148,7 @@ func teamAppFixture(t *testing.T) (*App, team.Mission) {
 		t.Fatal(err)
 	}
 	t.Setenv("DEVCYCLE_TEAM_HELPER", "1")
-	_, err = a.ConfigureAgentAdapter(ctx, models.AgentAdapterConfig{ID: "team-test", Name: "Process fixture", Command: binary, Args: []string{"-test.run=^TestTeamAgentProcess$", "--", "{{model}}", "{{prompt}}"}, Enabled: true})
+	_, err = a.ConfigureAgentAdapter(ctx, models.AgentAdapterConfig{ID: "team-test", Name: "Process fixture", Command: binary, Args: []string{"-test.run=^TestTeamAgentProcess$", "--", "{{model}}", "{{prompt_stdin}}"}, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,6 +242,9 @@ func TestTeamRiskAndConsentFailClosed(t *testing.T) {
 	}
 }
 func TestTeamReviewVerdict(t *testing.T) {
+	if !reviewPassed("{\"review\":\"pass\",\"findings\":[]}\n{\"review\":\"pass\",\"findings\":[]}") {
+		t.Fatal("transport replay rejected")
+	}
 	for _, v := range []struct {
 		log  string
 		want bool
@@ -231,5 +252,32 @@ func TestTeamReviewVerdict(t *testing.T) {
 		if reviewPassed(v.log) != v.want {
 			t.Fatal(v)
 		}
+	}
+}
+
+func TestRuntimeCommitsOnlyValidatedTaskChanges(t *testing.T) {
+	a, input := teamAppFixture(t)
+	input.Policy.CommitTaskChanges = true
+	ctx := context.Background()
+	m, err := a.CreateMission(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err = a.AdvanceMission(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DEVCYCLE_TEAM_WRITE", "docs/commit-proof.md")
+	m, err = a.AdvanceMission(ctx, m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := m.Plan[1]
+	if task.State != "completed" || task.Head == task.ArtifactHead {
+		t.Fatalf("controller did not commit allowed change: %+v", m.Executions)
+	}
+	dirty, err := missionGit(ctx, task.Worktree, "status", "--porcelain")
+	if err != nil || dirty != "" {
+		t.Fatal("controller left dirty worktree", err)
 	}
 }

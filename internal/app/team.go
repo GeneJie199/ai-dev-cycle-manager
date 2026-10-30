@@ -152,6 +152,12 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 	if err != nil {
 		return m, err
 	}
+	if m.WorktreeRoot == "" {
+		m.WorktreeRoot = filepath.Join(filepath.Dir(a.DBPath), "team-worktrees")
+	}
+	if m.BranchPrefix == "" {
+		m.BranchPrefix = "team"
+	}
 	if m.State == "completed" || m.State == "escalated" {
 		return m, nil
 	}
@@ -502,6 +508,7 @@ func (a *App) finishMissionTask(ctx context.Context, m team.Mission, index, ei i
 			return m, err
 		}
 	}
+	e.DurationMS = time.Since(e.Started).Milliseconds()
 	if err = a.Team.Save(ctx, &m); err != nil {
 		return m, err
 	}

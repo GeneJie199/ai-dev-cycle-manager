@@ -11,6 +11,7 @@ import (
 )
 
 const PromptPlaceholder = "{{prompt}}"
+const StdinPromptPlaceholder = "{{prompt_stdin}}"
 
 var adapterIDPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{1,63}$`)
 
@@ -72,9 +73,10 @@ func NormalizeAdapterConfig(config models.AgentAdapterConfig) (models.AgentAdapt
 			return config, fmt.Errorf("adapter argument %d is invalid", index+1)
 		}
 		promptSlots += strings.Count(argument, PromptPlaceholder)
+		promptSlots += strings.Count(argument, StdinPromptPlaceholder)
 	}
 	if promptSlots != 1 {
-		return config, fmt.Errorf("adapter arguments must contain exactly one %s placeholder", PromptPlaceholder)
+		return config, fmt.Errorf("adapter arguments must contain exactly one %s or %s placeholder", PromptPlaceholder, StdinPromptPlaceholder)
 	}
 	if len(config.Capabilities) > 20 {
 		return config, errors.New("adapter has too many capabilities")
@@ -111,6 +113,7 @@ func BuildCommand(config models.AgentAdapterConfig, prompt string) (string, []st
 	args := make([]string, len(config.Args))
 	for index, argument := range config.Args {
 		args[index] = strings.ReplaceAll(argument, PromptPlaceholder, prompt)
+		args[index] = strings.ReplaceAll(args[index], StdinPromptPlaceholder, "-")
 	}
 	return config.Command, args, nil
 }
