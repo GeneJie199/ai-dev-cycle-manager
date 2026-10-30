@@ -5,6 +5,14 @@ Implementation: DevCycle `internal/team`, `internal/app/team.go` and
 DevCycle with `devcycle serve --db <path> --addr 127.0.0.1:8766`, then open `/team.html`.
 The original workbench links to the new page.
 
+Commands and custom adapter configuration must not embed credential literals.
+Use CLI environment or keyring credentials. Variable references such as
+`$OPENAI_API_KEY`, `$env:OPENAI_API_KEY`, `${OPENAI_API_KEY}` and `%OPENAI_API_KEY%`
+are accepted as non-secret configuration text. Adapter argv is passed directly:
+these references are expanded only by an explicitly configured shell or by a CLI
+that supports them; DevCycle does not expand variables in argv. Verification
+history stores redacted command/name text, while executing the original command.
+
 ## Execution contract
 
 Mission owns a public project ID, requirement, acceptance criteria, plan/DAG, registry,

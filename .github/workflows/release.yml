@@ -116,7 +116,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: go.mod
+          go-version: '1.27.3'
           cache: true
       - uses: actions/download-artifact@v8
         with:
@@ -126,6 +126,10 @@ jobs:
         run: |
           go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 mod -licenses -json -output "dist/devcycle-${GITHUB_REF_NAME}.cdx.json" .
           cd dist && sha256sum devcycle-* > checksums.txt
+      - name: Package Corresponding Source
+        run: |
+          python3 scripts/package-corresponding-source.py --output "dist/ai-dev-cycle-manager-${GITHUB_REF_NAME}-source.tar.gz"
+          (cd dist && sha256sum *-source.tar.gz >> checksums.txt)
       - name: Attest release assets
         uses: actions/attest-build-provenance@v4
         with:
@@ -134,5 +138,6 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, '-') }}

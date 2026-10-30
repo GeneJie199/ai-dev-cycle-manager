@@ -26,6 +26,24 @@ func TestTeamAgentProcess(t *testing.T) {
 		}
 		input = string(data)
 	}
+	switch mode := os.Getenv("DEVCYCLE_TEAM_FAILURE_MODE"); mode {
+	case "timeout":
+		time.Sleep(3 * time.Second)
+	case "invalidcredentials", "ratelimit", "toolfailure":
+		println("injected CLI failure: " + mode)
+		os.Exit(1)
+	case "partialexecution":
+		if err := os.WriteFile("partial.txt", []byte("unfinished work\n"), 0o600); err != nil {
+			os.Exit(2)
+		}
+		println("injected failure after a real partial filesystem effect")
+		os.Exit(1)
+	case "malformed":
+		if strings.Contains(input, "Role: review.") {
+			println("unstructured review with no verdict")
+			os.Exit(0)
+		}
+	}
 	if file := os.Getenv("DEVCYCLE_TEAM_WRITE"); file != "" && strings.Contains(input, "Role: lead.") {
 		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 			os.Exit(2)
@@ -230,6 +248,87 @@ func TestTeamAgentFailureAndRecovery(t *testing.T) {
 		t.Fatal("ambiguous worker would replay automatically")
 	}
 }
+
+// These are controlled local process failures, not real-provider success tests.
+func TestMissionInjectedCLIFailuresNeverBecomeSuccess(t *testing.T) {
+	for _, mode := range []string{"invalidcredentials", "ratelimit", "timeout", "toolfailure", "partialexecution", "malformed"} {
+		t.Run(mode, func(t *testing.T) {
+			a, input := teamAppFixture(t)
+			t.Setenv("DEVCYCLE_TEAM_FAILURE_MODE", mode)
+			if mode == "timeout" {
+				input.Budget.TimeoutSeconds = 1
+			}
+			ctx := context.Background()
+			m, err := a.CreateMission(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			steps := 1
+			if mode == "malformed" {
+				steps = len(m.Plan)
+			}
+			for i := 0; i < steps; i++ {
+				m, err = a.AdvanceMission(ctx, m.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			last := m.Executions[len(m.Executions)-1]
+			if m.State == "completed" || last.Result != "failed" || len(last.EvidenceIDs) == 0 {
+				t.Fatalf("injected %s became success or lost evidence: %+v", mode, m)
+			}
+			if mode == "partialexecution" {
+				if _, err := os.Stat(filepath.Join(last.Worktree, "partial.txt")); err != nil {
+					t.Fatal("partial execution fixture produced no effect", err)
+				}
+			}
+			criteria, err := a.ListCriteriaByRequirement(ctx, m.RequirementID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, criterion := range criteria {
+				if criterion.Satisfied {
+					t.Fatal("failure marked acceptance satisfied")
+				}
+			}
+		})
+	}
+}
+
+func TestMissionUnavailableContextAndBudgetNeverDispatch(t *testing.T) {
+	for _, mode := range []string{"providerunavailable", "contextoverflow", "budgetexhausted"} {
+		t.Run(mode, func(t *testing.T) {
+			a, input := teamAppFixture(t)
+			switch mode {
+			case "providerunavailable":
+				input.Models[0].Available = false
+			case "contextoverflow":
+				input.Models[0].ContextLimit = 1
+			case "budgetexhausted":
+				input.Budget.MaxExecutions = 1
+			}
+			ctx := context.Background()
+			m, err := a.CreateMission(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m, err = a.AdvanceMission(ctx, m.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode == "budgetexhausted" {
+				m, err = a.AdvanceMission(ctx, m.ID)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			last := m.Executions[len(m.Executions)-1]
+			if m.State != "escalated" || last.Result != "escalated" || last.SessionID != "" {
+				t.Fatalf("%s dispatched a worker: %+v", mode, m)
+			}
+		})
+	}
+}
 func TestTeamRiskAndConsentFailClosed(t *testing.T) {
 	a, input := teamAppFixture(t)
 	ctx := context.Background()
@@ -254,6 +353,114 @@ func TestTeamRiskAndConsentFailClosed(t *testing.T) {
 	}
 	if m.State != "escalated" || len(m.Executions) != 0 {
 		t.Fatal("R4 ran automatically")
+	}
+}
+
+func TestMissionRiskIncludesEveryInstructionSource(t *testing.T) {
+	for _, source := range []string{"task", "acceptance", "checks", "integration", "security", "destructive command"} {
+		t.Run(source, func(t *testing.T) {
+			a, input := teamAppFixture(t)
+			input.Mode = "expert"
+			input.Plan = team.Simple(input.Goal)
+			switch source {
+			case "task":
+				input.Plan[1].Prompt = "Change production configuration"
+			case "acceptance":
+				input.Acceptance = []string{"Production deployment succeeds"}
+			case "checks":
+				input.Checks = []string{"echo production"}
+			case "integration":
+				input.IntegrationChecks = []string{"echo production"}
+			case "security":
+				input.SecurityChecks = []string{"echo production"}
+			case "destructive command":
+				input.Checks = []string{"Remove-Item -Recurse -Force ../outside"}
+			}
+			ctx := context.Background()
+			m, err := a.CreateMission(ctx, input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if m.Risk != 4 {
+				t.Fatalf("%s escaped risk assessment: R%d", source, m.Risk)
+			}
+			// Simulate an older binary that persisted the incorrectly low risk.
+			m.Risk = 1
+			if err = a.Team.Save(ctx, &m); err != nil {
+				t.Fatal(err)
+			}
+			m, err = a.AdvanceMission(ctx, m.ID)
+			if err != nil || m.State != "escalated" || len(m.Executions) != 0 {
+				t.Fatalf("unsafe dispatch: mission=%+v err=%v", m, err)
+			}
+			if _, err = a.RetryMission(ctx, m.ID); err == nil {
+				t.Fatal("R4 retry accepted")
+			}
+		})
+	}
+}
+
+func TestMissionSecretsAreNotPersistedInInstructions(t *testing.T) {
+	for _, source := range []string{"checks", "integration", "security"} {
+		t.Run(source, func(t *testing.T) {
+			a, input := teamAppFixture(t)
+			secretCheck := []string{"echo api_key=review-secret-literal"}
+			switch source {
+			case "checks":
+				input.Checks = secretCheck
+			case "integration":
+				input.IntegrationChecks = secretCheck
+			case "security":
+				input.SecurityChecks = secretCheck
+			}
+			if _, err := a.CreateMission(context.Background(), input); err == nil {
+				t.Fatal("secret-bearing command accepted")
+			}
+			missions, err := a.Team.List(context.Background())
+			if err != nil || len(missions) != 0 {
+				t.Fatalf("rejected input persisted: %+v %v", missions, err)
+			}
+		})
+	}
+	a, input := teamAppFixture(t)
+	input.Goal += " api_key=review-secret-literal"
+	input.Mode = "expert"
+	input.Plan = team.Simple(input.Goal)
+	input.Acceptance = []string{"Verify api_key=review-secret-literal"}
+	m, err := a.CreateMission(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := a.Team.Get(context.Background(), m.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(saved.Goal, "review-secret-literal") || strings.Contains(saved.Acceptance[0], "review-secret-literal") {
+		t.Fatal("goal or acceptance secret persisted")
+	}
+	for _, task := range saved.Plan {
+		if strings.Contains(task.Prompt, "review-secret-literal") {
+			t.Fatal("task secret persisted")
+		}
+	}
+}
+
+func TestAdapterRejectsCredentialLiteralsBeforePersistence(t *testing.T) {
+	a, _ := teamAppFixture(t)
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := models.AgentAdapterConfig{ID: "credential-test", Name: "Environment fixture", Command: binary, Args: []string{"--api-key", "literal-value", "{{prompt}}"}, Enabled: true}
+	if _, err = a.ConfigureAgentAdapter(context.Background(), config); err == nil {
+		t.Fatal("credential argument accepted")
+	}
+	if _, err = a.Store.GetAgentAdapter(context.Background(), config.ID); err == nil {
+		t.Fatal("rejected configuration persisted")
+	}
+	config.Args[1] = "$env:OPENAI_API_KEY"
+	if _, err = a.ConfigureAgentAdapter(context.Background(), config); err != nil {
+		t.Fatalf("environment reference rejected: %v", err)
 	}
 }
 

@@ -18,7 +18,7 @@ type About struct {
 }
 
 func BuildAbout() About {
-	a := About{Version: "2.0.0-dev", License: "AGPL-3.0-only", Copyright: "2026 GeneJie199", Source: "https://github.com/GeneJie199/ai-dev-cycle-manager"}
+	a := About{Version: "2.0.0-rc.1", License: "AGPL-3.0-only", Copyright: "2026 GeneJie199", Source: "https://github.com/GeneJie199/ai-dev-cycle-manager"}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, setting := range info.Settings {
 			switch setting.Key {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	devagent "github.com/GeneJie199/ai-dev-cycle-manager/internal/agent"
+	devai "github.com/GeneJie199/ai-dev-cycle-manager/internal/ai"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
 )
 
@@ -65,6 +66,9 @@ func (a *App) GetAgentAdapter(ctx context.Context, id string) (models.AgentAdapt
 }
 
 func (a *App) ConfigureAgentAdapter(ctx context.Context, adapter models.AgentAdapterConfig) (models.AgentAdapterStatus, error) {
+	if devai.ContainsSecretLiteral(strings.Join(append([]string{adapter.Name, adapter.Description, adapter.Command}, adapter.Args...), "\n")) {
+		return models.AgentAdapterStatus{}, validationf("adapter configuration must not contain secret literals; configure credentials through the CLI environment or keyring")
+	}
 	adapter, err := devagent.NormalizeAdapterConfig(adapter)
 	if err != nil {
 		return models.AgentAdapterStatus{}, validationf("%s", err.Error())

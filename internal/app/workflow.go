@@ -157,7 +157,9 @@ func (a *App) StartVerification(ctx context.Context, requirementID, criterionID,
 		_ = logFile.Close()
 		return models.VerificationRun{}, err
 	}
-	run := models.VerificationRun{ID: id, RequirementID: requirementID, CriterionID: criterionID, Name: strings.TrimSpace(name), Command: command, WorkingDir: abs, Status: "running", ExitCode: -1, StartedAt: time.Now().UTC().Truncate(time.Second)}
+	displayCommand, _ := devai.Redact(command)
+	displayName, _ := devai.Redact(strings.TrimSpace(name))
+	run := models.VerificationRun{ID: id, RequirementID: requirementID, CriterionID: criterionID, Name: displayName, Command: displayCommand, WorkingDir: abs, Status: "running", ExitCode: -1, StartedAt: time.Now().UTC().Truncate(time.Second)}
 	if run, err = a.Store.CreateVerificationRun(ctx, run); err != nil {
 		cancel()
 		_ = stopManagedCommand(cmd)
@@ -292,7 +294,9 @@ func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, n
 	if eErr != nil {
 		return models.VerificationRun{}, eErr
 	}
-	r := models.VerificationRun{ID: uuid.NewString(), RequirementID: requirementID, CriterionID: criterionID, Name: name, Command: command, WorkingDir: abs, Status: status, ExitCode: exit, Output: output, StartedAt: started, CompletedAt: time.Now().UTC().Truncate(time.Second), EvidenceID: evidence.ID}
+	displayCommand, _ := devai.Redact(command)
+	displayName, _ := devai.Redact(name)
+	r := models.VerificationRun{ID: uuid.NewString(), RequirementID: requirementID, CriterionID: criterionID, Name: displayName, Command: displayCommand, WorkingDir: abs, Status: status, ExitCode: exit, Output: output, StartedAt: started, CompletedAt: time.Now().UTC().Truncate(time.Second), EvidenceID: evidence.ID}
 	r, err = a.Store.CreateVerificationRun(ctx, r)
 	if err != nil {
 		return r, err

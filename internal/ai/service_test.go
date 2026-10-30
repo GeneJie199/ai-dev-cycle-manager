@@ -54,6 +54,23 @@ func TestGenerationCapacityIsBounded(t *testing.T) {
 	service.release()
 }
 
+func TestSecretLiteralDetectionDistinguishesEnvironmentReferences(t *testing.T) {
+	for _, value := range []string{"api_key=literal-value", "--api-key literal-value", "--api-key 'literal-value'", `"api_key":"literal-value"`, "password='literal-value'"} {
+		if !ContainsSecretLiteral(value) {
+			t.Errorf("literal accepted: %s", value)
+		}
+		redacted, _ := Redact(value)
+		if strings.Contains(redacted, "literal-value") {
+			t.Errorf("literal not redacted: %s", redacted)
+		}
+	}
+	for _, value := range []string{"api_key=$OPENAI_API_KEY", "--api-key $env:OPENAI_API_KEY", `--api-key "$OPENAI_API_KEY"`, "password=${PASSWORD}", "password=${env:PASSWORD}", "password=%PASSWORD%", "go test ./..."} {
+		if ContainsSecretLiteral(value) {
+			t.Errorf("reference rejected: %s", value)
+		}
+	}
+}
+
 func TestRedactRemovesCommonSecrets(t *testing.T) {
 	input := "token=abc123 password hunter2 postgres://user:pass@db/x\n-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"
 	redacted, count := Redact(input)

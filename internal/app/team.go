@@ -39,7 +39,7 @@ func (a *App) CreateMission(ctx context.Context, m team.Mission) (team.Mission, 
 	if m.ProjectID == "" {
 		m.ProjectID = repo.ID
 	}
-	risk, reasons := team.Assess(m.Goal, nil)
+	risk, reasons := team.AssessMission(m)
 	if m.Risk < risk {
 		m.Risk = risk
 	}
@@ -66,6 +66,18 @@ func (a *App) CreateMission(ctx context.Context, m team.Mission) (team.Mission, 
 		m.Acceptance = []string{"Goal implemented on isolated task branch", "All configured machine checks pass", "Independent review passes"}
 	}
 	m.Goal, _ = devai.Redact(m.Goal)
+	for i := range m.Acceptance {
+		m.Acceptance[i], _ = devai.Redact(m.Acceptance[i])
+	}
+	// A shell command cannot be safely redacted and then executed: reject secret
+	// literals and require environment/keyring references instead.
+	for _, checks := range [][]string{m.Checks, m.IntegrationChecks, m.SecurityChecks} {
+		for _, check := range checks {
+			if devai.ContainsSecretLiteral(check) {
+				return m, validationf("check commands must not contain secret literals; use environment or keyring references")
+			}
+		}
+	}
 	for i := range m.Plan {
 		t := &m.Plan[i]
 		if t.TaskID != "" || t.Worktree != "" || t.Branch != "" || t.Head != "" || t.ArtifactHead != "" || t.Attempts != 0 || (t.State != "" && t.State != "pending") {
@@ -151,6 +163,11 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 	m, err := a.Team.Get(ctx, id)
 	if err != nil {
 		return m, err
+	}
+	// Recheck persisted missions too, including missions created by older binaries.
+	if risk, reasons := team.AssessMission(m); risk > m.Risk {
+		m.Risk = risk
+		m.RiskReasons = reasons
 	}
 	if m.WorktreeRoot == "" {
 		m.WorktreeRoot = filepath.Join(filepath.Dir(a.DBPath), "team-worktrees")

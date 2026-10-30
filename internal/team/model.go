@@ -322,6 +322,20 @@ func Ready(m *Mission) []int {
 	return out
 }
 
+// AssessMission considers all declared instructions before dispatch. CLI consent
+// is not approval for high-risk instructions hidden outside the goal.
+func AssessMission(m Mission) (int, []string) {
+	text := []string{m.Goal}
+	text = append(text, m.Acceptance...)
+	text = append(text, m.Checks...)
+	text = append(text, m.IntegrationChecks...)
+	text = append(text, m.SecurityChecks...)
+	for _, task := range m.Plan {
+		text = append(text, task.Prompt)
+	}
+	return Assess(strings.Join(text, "\n"), nil)
+}
+
 // Assess is intentionally conservative. Callers may increase but cannot lower its result.
 func Assess(goal string, files []string) (int, []string) {
 	s := strings.ToLower(goal + " " + strings.Join(files, " "))
@@ -351,7 +365,7 @@ func Assess(goal string, files []string) (int, []string) {
 			reasons = append(reasons, term)
 		}
 	}
-	for _, term := range []string{"production", "destructive", "credential", "irreversible", "生产", "凭据", "不可逆", "销毁"} {
+	for _, term := range []string{"production", "destructive", "credential", "irreversible", "生产", "凭据", "不可逆", "销毁", "rm -rf", "rm -fr", "remove-item", "terraform apply", "terraform destroy", "kubectl apply", "kubectl delete", "drop database", "drop table", "git push"} {
 		if strings.Contains(s, term) {
 			risk = 4
 			reasons = append(reasons, term)
