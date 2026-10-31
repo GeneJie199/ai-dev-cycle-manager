@@ -258,6 +258,10 @@ func (a *App) StopVerification(ctx context.Context, id string) (models.Verificat
 }
 
 func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, name, command, workingDir string, timeout time.Duration) (models.VerificationRun, error) {
+	return a.runVerification(ctx, requirementID, criterionID, name, command, workingDir, timeout, nil)
+}
+
+func (a *App) runVerification(ctx context.Context, requirementID, criterionID, name, command, workingDir string, timeout time.Duration, binding *verificationBinding) (models.VerificationRun, error) {
 	if requirementID == "" || name == "" || strings.TrimSpace(command) == "" {
 		return models.VerificationRun{}, errors.New("requirementId, name, and command are required")
 	}
@@ -323,7 +327,12 @@ func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, n
 	metadata["command"], metadata["workingDir"] = command, abs
 	metadata["runStatus"], metadata["exitCode"] = status, fmt.Sprint(exit)
 	metadata["verificationRunId"] = id
-	evidence, eErr := a.addEvidence(ctx, models.Evidence{RequirementID: requirementID, CriterionID: criterionID, Kind: verificationKind(name), Title: name, Status: status, Inline: output, Metadata: metadata})
+	taskID := ""
+	if binding != nil {
+		binding.addMetadata(metadata, command)
+		taskID = binding.TaskID
+	}
+	evidence, eErr := a.addEvidence(ctx, models.Evidence{RequirementID: requirementID, CriterionID: criterionID, TaskID: taskID, Kind: verificationKind(name), Title: name, Status: status, Inline: output, Metadata: metadata})
 	if eErr != nil {
 		return models.VerificationRun{}, eErr
 	}

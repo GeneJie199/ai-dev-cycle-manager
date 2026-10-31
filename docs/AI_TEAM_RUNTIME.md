@@ -38,6 +38,10 @@ machine checks and required independent structured review are verified.
 
 Review findings can return work to lead under bounded `budget.maxFixes`; QA and review
 then receive fresh worktrees from the repaired branch. No automatic main merge occurs.
+Each plan task retains one logical DevCycle task ID across attempts. Every attempt
+gets a new worktree and branch; only the current attempt is linked on that task.
+Reopened work returns to todo/in-progress until it actually succeeds. Failed
+executions, their exact artifact locations, sessions and evidence remain in history.
 QA must depend on implementation and review must depend on QA; cycles/unknown
 dependencies/duplicate IDs are rejected. R3 requires configured integration/security
 checks and two successful review tasks. R4 is never automatically executed/approved.
@@ -85,6 +89,14 @@ creation cannot supply these reserved attestation fields.
 
 When a candidate has machine runs or belongs to AI Team, readiness checks the latest
 proof for each command, working directory and task against the exported sources.
+Controller-owned QA proof additionally carries `missionId`, `planTaskId`,
+`executionId`, `verificationAttempt`, `verificationCheckIndex` and `logicalCheckId`.
+The logical check ID is SHA-256 of mission ID, plan task ID, check ordinal and the
+original command, separated by NUL bytes. Only this reserved controller identity
+permits a higher attempt of the same check to supersede older evidence across
+worktrees. Different checks or tasks cannot hide one another's failures. Public
+evidence creation cannot supply these reserved control fields. Generic verification
+without this identity keeps the strict command/directory/task grouping.
 Each source HEAD must be covered by a verified machine commit or its ancestor chain;
 an explorer's older baseline cannot cover a newer untested implementation. A clean
 new commit makes old proof stale until the check is rerun. A fresh same-command pass

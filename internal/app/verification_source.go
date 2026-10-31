@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,8 +46,37 @@ func reservedVerificationMetadata(key string) bool {
 	switch key {
 	case "verificationRunId", "sourceRepository", "sourceWorktree", "sourceCommit", "sourceClean", "sourceRepositoryAfter", "sourceWorktreeAfter", "sourceCommitAfter", "sourceCleanAfter", "sourceVerified":
 		return true
+	case "logicalCheckId", "planTaskId", "verificationAttempt", "verificationCheckIndex":
+		return true
 	}
 	return false
+}
+
+type verificationBinding struct {
+	MissionID, PlanTaskID, TaskID, ExecutionID string
+	Attempt, CheckIndex                        int
+}
+
+func (b verificationBinding) addMetadata(metadata map[string]string, command string) {
+	digest := sha256.Sum256([]byte(strings.Join([]string{b.MissionID, b.PlanTaskID, strconv.Itoa(b.CheckIndex), command}, "\x00")))
+	metadata["logicalCheckId"] = hex.EncodeToString(digest[:])
+	metadata["missionId"], metadata["planTaskId"] = b.MissionID, b.PlanTaskID
+	metadata["verificationAttempt"], metadata["verificationCheckIndex"] = strconv.Itoa(b.Attempt), strconv.Itoa(b.CheckIndex)
+	metadata["executionId"] = b.ExecutionID
+}
+
+func machineProofScope(proof models.Evidence) (key string, attempt int, managed, valid bool) {
+	meta := proof.Metadata
+	if meta["logicalCheckId"] == "" && meta["planTaskId"] == "" && meta["verificationAttempt"] == "" {
+		return strings.Join([]string{"legacy", meta["command"], verificationPathKey(meta["workingDir"]), proof.TaskID}, "\x00"), 0, false, true
+	}
+	digest, digestErr := hex.DecodeString(meta["logicalCheckId"])
+	attempt, err := strconv.Atoi(meta["verificationAttempt"])
+	checkIndex, indexErr := strconv.Atoi(meta["verificationCheckIndex"])
+	if digestErr != nil || len(digest) != 32 || err != nil || attempt < 1 || indexErr != nil || checkIndex < 0 || meta["missionId"] == "" || meta["planTaskId"] == "" || meta["executionId"] == "" || meta["verificationRunId"] == "" || proof.TaskID == "" {
+		return "", 0, true, false
+	}
+	return strings.Join([]string{"managed", meta["missionId"], meta["planTaskId"], proof.TaskID, meta["logicalCheckId"]}, "\x00"), attempt, true, true
 }
 
 func verificationPathKey(dir string) string {
@@ -63,18 +95,36 @@ func (a *App) currentMachineEvidence(ctx context.Context, evidence []models.Evid
 		}
 		byEvidence[run.EvidenceID] = run
 	}
-	seen := map[string]bool{}
-	verifiedSources := []SourceSnapshot{}
+	latest := map[string]models.Evidence{}
 	for _, proof := range evidence { // Store returns newest first with a rowid tie-breaker.
-		run, machine := byEvidence[proof.ID]
+		_, machine := byEvidence[proof.ID]
 		if !machine {
 			continue
 		}
-		key := strings.Join([]string{proof.Metadata["command"], verificationPathKey(proof.Metadata["workingDir"]), proof.TaskID}, "\x00")
-		if seen[key] {
-			continue
+		key, attempt, managed, valid := machineProofScope(proof)
+		if !valid {
+			return false
 		}
-		seen[key] = true
+		if previous, exists := latest[key]; exists {
+			if !managed {
+				continue
+			}
+			if previous.Metadata["command"] != proof.Metadata["command"] {
+				return false
+			}
+			_, previousAttempt, _, _ := machineProofScope(previous)
+			if attempt < previousAttempt || (attempt == previousAttempt && proof.CreatedAt.Before(previous.CreatedAt)) {
+				continue
+			}
+			if attempt == previousAttempt && proof.CreatedAt.Equal(previous.CreatedAt) && (proof.Status == "passed" || previous.Status != "passed") {
+				continue
+			}
+		}
+		latest[key] = proof
+	}
+	verifiedSources := []SourceSnapshot{}
+	for _, proof := range latest {
+		run := byEvidence[proof.ID]
 		meta := proof.Metadata
 		if run.Status != "passed" || proof.Status != "passed" || meta["verificationRunId"] != run.ID || meta["command"] != run.Command || meta["workingDir"] != run.WorkingDir || meta["sourceVerified"] != "true" || meta["sourceClean"] != "true" || meta["sourceCleanAfter"] != "true" || meta["sourceCommit"] == "" || meta["sourceCommit"] != meta["sourceCommitAfter"] || meta["sourceRepository"] != meta["sourceRepositoryAfter"] || meta["sourceWorktree"] != meta["sourceWorktreeAfter"] {
 			return false

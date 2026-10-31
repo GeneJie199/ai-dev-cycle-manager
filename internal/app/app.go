@@ -291,12 +291,27 @@ func (a *App) CreateTask(ctx context.Context, requirementID, title, description 
 // LinkTaskToWorktree creates a branch+worktree and links them on the task.
 // Branch = 独立工作版本; Worktree = 隔离开发目录.
 func (a *App) LinkTaskToWorktree(ctx context.Context, repoPath, taskID, branch, worktreePath string) (models.Task, git.WorktreeInfo, error) {
+	return a.linkTaskToWorktree(ctx, repoPath, taskID, branch, worktreePath, false)
+}
+
+func (a *App) linkTaskToWorktree(ctx context.Context, repoPath, taskID, branch, worktreePath string, nextAttempt bool) (models.Task, git.WorktreeInfo, error) {
 	existing, err := a.Store.GetTask(ctx, taskID)
 	if err != nil {
 		return models.Task{}, git.WorktreeInfo{}, err
 	}
-	if existing.WorktreePath != "" {
+	if existing.WorktreePath != "" && !nextAttempt {
 		return models.Task{}, git.WorktreeInfo{}, fmt.Errorf("task already has a linked worktree")
+	}
+	if nextAttempt {
+		sessions, err := a.Store.ListAgentSessions(ctx, taskID)
+		if err != nil {
+			return models.Task{}, git.WorktreeInfo{}, err
+		}
+		for _, session := range sessions {
+			if session.Status == "running" {
+				return models.Task{}, git.WorktreeInfo{}, fmt.Errorf("task still has a running agent session")
+			}
+		}
 	}
 	wt, err := a.AddWorktree(ctx, repoPath, git.WorktreeAddOptions{
 		Path:         worktreePath,

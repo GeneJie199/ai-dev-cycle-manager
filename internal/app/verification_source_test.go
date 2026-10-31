@@ -131,8 +131,10 @@ func TestNonGitVerificationDoesNotClaimSourceBindingAndManualProofCannotForgeIt(
 	if err != nil || len(proofs) != 1 || proofs[0].Metadata["sourceVerified"] != "false" || proofs[0].Metadata["sourceCommit"] != "" {
 		t.Fatalf("unbound command fabricated source: %+v %v", proofs, err)
 	}
-	if _, err = a.AddEvidence(ctx, models.Evidence{RequirementID: req.ID, Kind: "test", Title: "forged proof", Status: "passed", Metadata: map[string]string{"sourceVerified": "true", "verificationRunId": run.ID}}); err == nil {
-		t.Fatal("caller forged runtime source attestation")
+	for _, key := range []string{"sourceVerified", "logicalCheckId", "planTaskId", "verificationAttempt", "verificationCheckIndex"} {
+		if _, err = a.AddEvidence(ctx, models.Evidence{RequirementID: req.ID, Kind: "test", Title: "forged proof", Status: "passed", Metadata: map[string]string{key: "forged", "verificationRunId": run.ID}}); err == nil {
+			t.Fatal("caller forged runtime attestation", key)
+		}
 	}
 	if _, err = a.UpdateCriterionResult(ctx, criterion.ID, true); err != nil {
 		t.Fatal(err)
@@ -141,6 +143,67 @@ func TestNonGitVerificationDoesNotClaimSourceBindingAndManualProofCannotForgeIt(
 	if err != nil || candidate.Readiness.Ready {
 		t.Fatalf("unbound machine check fabricated release readiness: %+v %v", candidate, err)
 	}
+}
+
+func TestManagedMachineCheckSupersessionDoesNotHideAnotherCheckFailure(t *testing.T) {
+	a := openTestApp(t)
+	ctx := context.Background()
+	repo := initReleaseRepo(t)
+	req, _ := a.CreateRequirement(ctx, "managed checks", "")
+	criterion, _ := a.CreateCriterion(ctx, req.ID, "both checks pass")
+	task, _ := a.CreateTask(ctx, req.ID, "logical QA", "")
+	if _, err := a.Store.LinkTaskGit(ctx, task.ID, "main", repo); err != nil {
+		t.Fatal(err)
+	}
+	check := `if [ "$DEVCYCLE_SCOPED_CHECK_FAIL" = "1" ]; then exit 1; fi; git status --porcelain`
+	if runtime.GOOS == "windows" {
+		check = `if ($env:DEVCYCLE_SCOPED_CHECK_FAIL -eq '1') { exit 1 }; git status --porcelain`
+	}
+	binding := verificationBinding{MissionID: "controlled-mission", PlanTaskID: "qa", TaskID: task.ID, ExecutionID: "first-execution", Attempt: 1, CheckIndex: 0}
+	t.Setenv("DEVCYCLE_SCOPED_CHECK_FAIL", "1")
+	if _, err := a.runVerification(ctx, req.ID, criterion.ID, "machine check", check, repo, time.Minute, &binding); err == nil {
+		t.Fatal("initial real check did not fail")
+	}
+	worktree := filepath.Join(t.TempDir(), "next-attempt")
+	if _, _, err := a.linkTaskToWorktree(ctx, repo, task.ID, "fresh-qa", worktree, true); err != nil {
+		t.Fatal(err)
+	}
+	binding.Attempt, binding.ExecutionID = 2, "second-execution"
+	t.Setenv("DEVCYCLE_SCOPED_CHECK_FAIL", "")
+	if _, err := a.runVerification(ctx, req.ID, criterion.ID, "machine check", check, worktree, time.Minute, &binding); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.UpdateTaskStatus(ctx, task.ID, models.TaskStatusDone); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.UpdateCriterionResult(ctx, criterion.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	assertReady := func(expected bool) {
+		t.Helper()
+		candidate, err := a.ExportReleaseCandidate(ctx, req.ID)
+		if err != nil || candidate.Readiness.Ready != expected {
+			t.Fatalf("readiness expected=%t candidate=%+v err=%v", expected, candidate, err)
+		}
+	}
+	assertReady(true) // Same controlled check supersedes its failed prior cwd.
+	other := binding
+	other.CheckIndex, other.Attempt, other.ExecutionID = 1, 1, "other-check-execution"
+	t.Setenv("DEVCYCLE_SCOPED_CHECK_FAIL", "1")
+	if _, err := a.runVerification(ctx, req.ID, "", "machine check", check, worktree, time.Minute, &other); err == nil {
+		t.Fatal("second real check did not fail")
+	}
+	t.Setenv("DEVCYCLE_SCOPED_CHECK_FAIL", "")
+	binding.Attempt, binding.ExecutionID = 3, "third-execution"
+	if _, err := a.runVerification(ctx, req.ID, "", "machine check", check, worktree, time.Minute, &binding); err != nil {
+		t.Fatal(err)
+	}
+	assertReady(false) // Identical command, different check ordinal: failure must survive.
+	other.Attempt, other.ExecutionID = 2, "other-check-fixed"
+	if _, err := a.runVerification(ctx, req.ID, "", "machine check", check, worktree, time.Minute, &other); err != nil {
+		t.Fatal(err)
+	}
+	assertReady(true)
 }
 
 func TestOldExplorerProofCannotCoverNewImplementationHead(t *testing.T) {

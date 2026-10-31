@@ -256,6 +256,10 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 		return m, err
 	}
 	chosen := choices[0]
+	// A logical task survives retries; each attempt gets a fresh artifact location.
+	if t.Attempts > 0 {
+		t.Worktree, t.Branch, t.Head, t.ArtifactHead = "", "", "", ""
+	}
 	t.State = "running"
 	t.Attempts++
 	m.State = "running"
@@ -266,23 +270,30 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 		return m, err
 	}
 	// All side effects follow the persisted claim. No custom Git orchestration is introduced.
-	if t.TaskID == "" {
+	if t.Worktree == "" {
 		source, sourceErr := a.missionSource(ctx, m)
 		if sourceErr != nil {
 			return a.finishMissionTask(ctx, m, index, ei, sourceErr)
 		}
-		task, createErr := a.CreateTask(ctx, m.RequirementID, t.ID, t.Prompt)
-		err = createErr
+		if t.TaskID == "" {
+			task, createErr := a.CreateTask(ctx, m.RequirementID, t.ID, t.Prompt)
+			err = createErr
+			if err == nil {
+				t.TaskID = task.ID
+			}
+		}
 		if err == nil {
-			t.TaskID = task.ID
-			ownedID := t.ID + "-" + task.ID[:8]
+			ownedID := fmt.Sprintf("%s-%s-%d", t.ID, t.TaskID[:8], t.Attempts)
 			t.Branch = m.BranchPrefix + "/" + m.ID + "/" + ownedID
 			t.Worktree = filepath.Join(m.WorktreeRoot, m.ID, ownedID)
-			_, _, err = a.LinkTaskToWorktree(ctx, source, t.TaskID, t.Branch, t.Worktree)
+			_, _, err = a.linkTaskToWorktree(ctx, source, t.TaskID, t.Branch, t.Worktree, t.Attempts > 1)
 		}
 	}
 	if err == nil && t.Head == "" {
 		t.Head, err = missionGit(ctx, t.Worktree, "rev-parse", "HEAD")
+	}
+	if err == nil {
+		_, err = a.UpdateTaskStatus(ctx, t.TaskID, models.TaskStatusInProgress)
 	}
 	if err == nil {
 		err = a.Team.Save(ctx, &m)
@@ -478,8 +489,9 @@ func (a *App) finishMissionTask(ctx context.Context, m team.Mission, index, ei i
 	if runErr == nil && t.Role == "qa" {
 		e.TestResult = "passed"
 		checks := append(append(append([]string{}, m.Checks...), m.IntegrationChecks...), m.SecurityChecks...)
-		for _, check := range checks {
-			run, err := a.RunVerification(ctx, m.RequirementID, "", "AI Team test "+t.ID, check, t.Worktree, time.Duration(m.Budget.TimeoutSeconds)*time.Second)
+		for checkIndex, check := range checks {
+			binding := verificationBinding{MissionID: m.ID, PlanTaskID: t.ID, TaskID: t.TaskID, Attempt: t.Attempts, ExecutionID: e.ID, CheckIndex: checkIndex}
+			run, err := a.runVerification(ctx, m.RequirementID, "", "AI Team test "+t.ID, check, t.Worktree, time.Duration(m.Budget.TimeoutSeconds)*time.Second, &binding)
 			if run.EvidenceID != "" {
 				e.EvidenceIDs = append(e.EvidenceIDs, run.EvidenceID)
 			}
@@ -534,20 +546,26 @@ func (a *App) finishMissionTask(ctx context.Context, m team.Mission, index, ei i
 					m.FixCycles++
 					m.State = "retry"
 					m.Plan[j].State = "retry"
-					m.Plan[j].TaskID = ""
 					m.Plan[j].Worktree = ""
 					m.Plan[j].Branch = ""
 					m.Plan[j].Head = ""
 					m.Plan[j].ArtifactHead = ""
+					if _, err := a.UpdateTaskStatus(ctx, m.Plan[j].TaskID, models.TaskStatusTodo); err != nil {
+						return m, err
+					}
 					for k := range m.Plan {
 						r := &m.Plan[k]
 						if r.Role == "qa" || r.Role == "review" {
 							r.State = "pending"
-							r.TaskID = ""
 							r.Worktree = ""
 							r.Branch = ""
 							r.Head = ""
 							r.ArtifactHead = ""
+							if r.TaskID != "" {
+								if _, err := a.UpdateTaskStatus(ctx, r.TaskID, models.TaskStatusTodo); err != nil {
+									return m, err
+								}
+							}
 						}
 					}
 					break
