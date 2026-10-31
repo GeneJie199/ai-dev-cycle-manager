@@ -14,6 +14,7 @@ func TestTeamFixCyclePreservesIdentityAndProducesReadyCandidate(t *testing.T) {
 	for _, name := range []string{"review-fix", "qa-failure-then-review-fix"} {
 		t.Run(name, func(t *testing.T) {
 			a, input := teamAppFixture(t)
+			t.Setenv("DEVCYCLE_TEAM_ECHO_PROMPT", "1")
 			input.Policy.CommitTaskChanges = true
 			input.Checks = []string{`if [ "$DEVCYCLE_MACHINE_CHECK_FAIL" = "1" ]; then exit 1; fi; git status --porcelain`}
 			if runtime.GOOS == "windows" {

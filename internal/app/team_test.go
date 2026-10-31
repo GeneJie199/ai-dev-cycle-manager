@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,6 +27,40 @@ func TestTeamAgentProcess(t *testing.T) {
 		}
 		input = string(data)
 	}
+	// Echoed historical prompts are data, so select only this invocation's role.
+	firstLine := strings.SplitN(input, "\n", 2)[0]
+	_, roleText, _ := strings.Cut(firstLine, "Role: ")
+	role, _, _ := strings.Cut(roleText, ".")
+	if os.Getenv("DEVCYCLE_TEAM_ECHO_PROMPT") == "1" {
+		fmt.Fprintln(os.Stderr, "user\n"+input)
+		fmt.Fprintln(os.Stderr, `{"review":"fail","findings":["diagnostic/source sample, never a verdict"]}`)
+	}
+	if role == "review" {
+		switch os.Getenv("DEVCYCLE_TEAM_RESPONSE_MODE") {
+		case "diagnostic-fail":
+			fmt.Fprintln(os.Stderr, `{"review":"fail","findings":["old stderr context"]}`)
+			fmt.Println(`{"review":"pass","findings":[]}`)
+			os.Exit(0)
+		case "stdout-conflict":
+			fmt.Println(`{"review":"fail","findings":["current issue"]}`)
+			fmt.Println(`{"review":"pass","findings":[]}`)
+			os.Exit(0)
+		case "stderr-pass-empty":
+			fmt.Fprintln(os.Stderr, `{"review":"pass","findings":[]}`)
+			os.Exit(0)
+		case "malformed-response":
+			fmt.Println("{not-json")
+			os.Exit(0)
+		case "tool-json":
+			fmt.Fprintln(os.Stderr, `{"review":"pass","findings":[]}`)
+			fmt.Println(`{"type":"tool","output":"{\"review\":\"pass\",\"findings\":[]}"}`)
+			os.Exit(0)
+		case "oversized-response":
+			fmt.Print(strings.Repeat("x", int(maxAgentResponseBytes)+1))
+			fmt.Println("\n" + `{"review":"pass","findings":[]}`)
+			os.Exit(0)
+		}
+	}
 	switch mode := os.Getenv("DEVCYCLE_TEAM_FAILURE_MODE"); mode {
 	case "timeout":
 		time.Sleep(3 * time.Second)
@@ -39,12 +74,12 @@ func TestTeamAgentProcess(t *testing.T) {
 		println("injected failure after a real partial filesystem effect")
 		os.Exit(1)
 	case "malformed":
-		if strings.Contains(input, "Role: review.") {
+		if role == "review" {
 			println("unstructured review with no verdict")
 			os.Exit(0)
 		}
 	}
-	if file := os.Getenv("DEVCYCLE_TEAM_WRITE"); file != "" && strings.Contains(input, "Role: lead.") {
+	if file := os.Getenv("DEVCYCLE_TEAM_WRITE"); file != "" && role == "lead" {
 		if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 			os.Exit(2)
 		}
@@ -56,7 +91,7 @@ func TestTeamAgentProcess(t *testing.T) {
 			os.Exit(2)
 		}
 	}
-	if os.Getenv("DEVCYCLE_TEAM_FRONTEND") == "1" && strings.Contains(input, "Role: frontend.") {
+	if os.Getenv("DEVCYCLE_TEAM_FRONTEND") == "1" && role == "frontend" {
 		if err := os.MkdirAll("frontend", 0o700); err != nil {
 			os.Exit(2)
 		}
@@ -71,10 +106,10 @@ func TestTeamAgentProcess(t *testing.T) {
 		time.Sleep(400 * time.Millisecond)
 	}
 	if os.Getenv("DEVCYCLE_TEAM_REVIEW_FAIL") == "1" {
-		println(`{"review":"fail","findings":["missing regression coverage"]}`)
+		fmt.Println(`{"review":"fail","findings":["missing regression coverage"]}`)
 		os.Exit(0)
 	}
-	println(`{"review":"pass","findings":[]}`)
+	fmt.Println(`{"review":"pass","findings":[]}`)
 	os.Exit(0)
 }
 

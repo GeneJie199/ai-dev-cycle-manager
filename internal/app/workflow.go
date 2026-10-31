@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -410,6 +411,11 @@ func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, mode
 	if err != nil {
 		return models.AgentSession{}, err
 	}
+	responseFile, err := openResponseCapture(logPath+".response", maxAgentResponseBytes)
+	if err != nil {
+		_ = logFile.Close()
+		return models.AgentSession{}, err
+	}
 	cmd := exec.CommandContext(context.Background(), path, args...)
 	for _, argument := range adapter.Args {
 		if strings.Contains(argument, devagent.StdinPromptPlaceholder) {
@@ -419,16 +425,19 @@ func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, mode
 	}
 	cmd.Dir = task.WorktreePath
 	prepareManagedCommand(cmd)
-	cmd.Stdout = logFile
+	cmd.Stdout = io.MultiWriter(logFile, responseFile)
 	cmd.Stderr = logFile
 	if err = cmd.Start(); err != nil {
-		logFile.Close()
+		_ = responseFile.Close()
+		_ = logFile.Close()
 		return models.AgentSession{}, err
 	}
 	session := models.AgentSession{ID: id, TaskID: taskID, Provider: adapter.ID, Prompt: prompt, WorkingDir: task.WorktreePath, Status: "running", PID: cmd.Process.Pid, LogPath: logPath, StartedAt: time.Now().UTC().Truncate(time.Second)}
 	if session, err = a.Store.CreateAgentSession(ctx, session); err != nil {
-		_ = cmd.Process.Kill()
-		logFile.Close()
+		_ = stopManagedCommand(cmd)
+		_ = cmd.Wait()
+		_ = responseFile.Close()
+		_ = logFile.Close()
 		return session, err
 	}
 	a.mu.Lock()
@@ -438,7 +447,12 @@ func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, mode
 	go func() {
 		defer a.agentWG.Done()
 		err := cmd.Wait()
-		_ = logFile.Close()
+		if closeErr := responseFile.Close(); err == nil {
+			err = closeErr
+		}
+		if closeErr := logFile.Close(); err == nil {
+			err = closeErr
+		}
 		status := "completed"
 		if err != nil {
 			status = "failed"

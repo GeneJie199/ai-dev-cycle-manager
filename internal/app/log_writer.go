@@ -16,9 +16,10 @@ const maxAgentLogBytes int64 = 10 << 20
 const truncatedLogMarker = "[older agent output truncated]\n"
 
 type boundedLogWriter struct {
-	mu      sync.Mutex
-	file    *os.File
-	maximum int64
+	mu        sync.Mutex
+	file      *os.File
+	maximum   int64
+	truncated bool
 }
 
 type redactingLogWriter struct {
@@ -154,6 +155,13 @@ func (writer *boundedLogWriter) Write(data []byte) (int, error) {
 		writer.maximum = maxAgentLogBytes
 	}
 	if int64(len(data)) >= writer.maximum {
+		info, err := writer.file.Stat()
+		if err != nil {
+			return 0, err
+		}
+		if int64(len(data)) > writer.maximum || info.Size() > 0 {
+			writer.truncated = true
+		}
 		data = data[len(data)-int(writer.maximum):]
 		if err := writer.file.Truncate(0); err != nil {
 			return 0, err
@@ -171,6 +179,7 @@ func (writer *boundedLogWriter) Write(data []byte) (int, error) {
 		return 0, err
 	}
 	if info.Size()+int64(len(data)) > writer.maximum {
+		writer.truncated = true
 		keep := writer.maximum / 2
 		if keep < 1 {
 			keep = 1
@@ -204,9 +213,11 @@ func (writer *boundedLogWriter) Write(data []byte) (int, error) {
 		remaining -= info.Size()
 	}
 	if remaining <= 0 {
+		writer.truncated = true
 		return originalLength, nil
 	}
 	if int64(len(data)) > remaining {
+		writer.truncated = true
 		data = data[len(data)-int(remaining):]
 	}
 	if _, err = writer.file.Seek(0, io.SeekEnd); err != nil {

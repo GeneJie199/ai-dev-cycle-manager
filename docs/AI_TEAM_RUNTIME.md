@@ -77,6 +77,17 @@ All final task heads/clean states are rechecked before completion. Acceptance re
 to configured command/review scope; it does not claim untested product semantics.
 The standard DevCycle development report and release candidate remain available.
 
+Review adapters use a channel contract: stdout contains the final structured review
+response; prompt echoes, tool/source samples and diagnostics belong on stderr. Both
+streams remain in the bounded redacted audit log. A separate redacted stdout file
+is capped at 1 MiB and carries a completion, truncation and SHA-256 integrity record.
+Review reads only this complete response; missing, incomplete, truncated or changed
+responses fail closed, including sessions from older versions without response files.
+Conflicting stdout verdicts and nonempty findings still fail; the runtime never
+selects only the last JSON line. Execution evidence retains the audit log hash and
+adds the response hash and transport. Historical outputs and errors are embedded as
+single-line JSON data so their line breaks cannot masquerade as current verdicts.
+
 Synchronous and asynchronous machine commands record runtime-owned string metadata:
 `verificationRunId`, `sourceRepository`, `sourceWorktree`, `sourceCommit`,
 `sourceClean`, and the corresponding `sourceRepositoryAfter`, `sourceWorktreeAfter`,
