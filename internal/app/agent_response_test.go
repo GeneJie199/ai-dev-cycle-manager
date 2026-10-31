@@ -31,7 +31,9 @@ func TestAgentReviewVotesOnlyFromCompleteStdout(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			deadline := time.Now().Add(10 * time.Second)
+			// Race instrumentation makes processing the >1 MiB fixture slower.
+			// Wait for transport completion before asserting its unchanged cap rejection.
+			deadline := time.Now().Add(30 * time.Second)
 			for session.Status == "running" && time.Now().Before(deadline) {
 				time.Sleep(20 * time.Millisecond)
 				session, err = a.Store.GetAgentSession(ctx, session.ID)
