@@ -43,6 +43,7 @@ func NewServer(a *app.App, logger *log.Logger) (*Server, error) {
 		logger = log.Default()
 	}
 	s := &Server{app: a, mux: http.NewServeMux(), logger: logger}
+	s.registerTeamRoutes()
 
 	sub, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -115,6 +116,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'")
 	w.Header().Set("Cache-Control", "no-store")
+	host := r.Host
+	if parsed, _, err := net.SplitHostPort(host); err == nil {
+		host = parsed
+	}
+	host = strings.Trim(host, "[]")
+	ip := net.ParseIP(host)
+	if !strings.EqualFold(host, "localhost") && (ip == nil || !ip.IsLoopback()) {
+		writeError(w, http.StatusForbidden, "non-loopback Host refused")
+		return
+	}
+	if r.Method != "GET" && r.Method != "HEAD" && !teamOrigin(w, r) {
+		return
+	}
 	s.mux.ServeHTTP(w, r)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,15 @@ import (
 )
 
 func (a *App) AddEvidence(ctx context.Context, e models.Evidence) (models.Evidence, error) {
+	for key := range e.Metadata {
+		if reservedVerificationMetadata(key) {
+			return e, validationf("verification source metadata is runtime-owned")
+		}
+	}
+	return a.addEvidence(ctx, e)
+}
+
+func (a *App) addEvidence(ctx context.Context, e models.Evidence) (models.Evidence, error) {
 	if strings.TrimSpace(e.RequirementID) == "" || strings.TrimSpace(e.Kind) == "" || strings.TrimSpace(e.Title) == "" {
 		return e, errors.New("requirementId, kind, and title are required")
 	}
@@ -149,6 +159,7 @@ func (a *App) StartVerification(ctx context.Context, requirementID, criterionID,
 		cmd = exec.CommandContext(runCtx, "sh", "-c", command)
 	}
 	cmd.Dir = abs
+	sourceBefore := a.verificationSource(abs)
 	prepareManagedCommand(cmd)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -157,7 +168,9 @@ func (a *App) StartVerification(ctx context.Context, requirementID, criterionID,
 		_ = logFile.Close()
 		return models.VerificationRun{}, err
 	}
-	run := models.VerificationRun{ID: id, RequirementID: requirementID, CriterionID: criterionID, Name: strings.TrimSpace(name), Command: command, WorkingDir: abs, Status: "running", ExitCode: -1, StartedAt: time.Now().UTC().Truncate(time.Second)}
+	displayCommand, _ := devai.Redact(command)
+	displayName, _ := devai.Redact(strings.TrimSpace(name))
+	run := models.VerificationRun{ID: id, RequirementID: requirementID, CriterionID: criterionID, Name: displayName, Command: displayCommand, WorkingDir: abs, Status: "running", ExitCode: -1, StartedAt: time.Now().UTC().Truncate(time.Second)}
 	if run, err = a.Store.CreateVerificationRun(ctx, run); err != nil {
 		cancel()
 		_ = stopManagedCommand(cmd)
@@ -168,14 +181,15 @@ func (a *App) StartVerification(ctx context.Context, requirementID, criterionID,
 	a.verifications[id] = &runningVerification{cmd: cmd, cancel: cancel}
 	a.verificationWG.Add(1)
 	a.mu.Unlock()
-	go a.finishVerification(run, cmd, logFile, runCtx, cancel)
+	go a.finishVerification(run, cmd, logFile, runCtx, cancel, sourceBefore)
 	return a.withVerificationRuntime(run), nil
 }
 
-func (a *App) finishVerification(run models.VerificationRun, cmd *exec.Cmd, logFile *redactingLogWriter, runCtx context.Context, cancel context.CancelFunc) {
+func (a *App) finishVerification(run models.VerificationRun, cmd *exec.Cmd, logFile *redactingLogWriter, runCtx context.Context, cancel context.CancelFunc, sourceBefore devgit.SourceState) {
 	defer a.verificationWG.Done()
 	defer cancel()
 	runErr := cmd.Wait()
+	sourceAfter := a.verificationSource(run.WorkingDir)
 	_ = logFile.Close()
 	outputBytes, readErr := readLogTail(a.verificationLogPath(run.ID), 32768)
 	if readErr == nil {
@@ -194,6 +208,10 @@ func (a *App) finishVerification(run models.VerificationRun, cmd *exec.Cmd, logF
 			run.Status = "timed_out"
 		}
 	}
+	if verificationSourceChanged(sourceBefore, sourceAfter) {
+		run.Status = "failed"
+		run.Output += "\n[verification source changed or was not clean before/after the command]"
+	}
 	a.mu.Lock()
 	if process := a.verifications[run.ID]; process != nil && process.finalStatus != "" {
 		run.Status = process.finalStatus
@@ -205,7 +223,11 @@ func (a *App) finishVerification(run models.VerificationRun, cmd *exec.Cmd, logF
 	if run.Status != "passed" {
 		evidenceStatus = "failed"
 	}
-	evidence, evidenceErr := a.AddEvidence(context.Background(), models.Evidence{RequirementID: run.RequirementID, CriterionID: run.CriterionID, Kind: verificationKind(run.Name), Title: run.Name, Status: evidenceStatus, Inline: run.Output, Metadata: map[string]string{"command": run.Command, "workingDir": run.WorkingDir, "runStatus": run.Status, "exitCode": fmt.Sprintf("%d", run.ExitCode)}})
+	metadata := verificationSourceMetadata(sourceBefore, sourceAfter)
+	metadata["command"], metadata["workingDir"] = run.Command, run.WorkingDir
+	metadata["runStatus"], metadata["exitCode"] = run.Status, fmt.Sprint(run.ExitCode)
+	metadata["verificationRunId"] = run.ID
+	evidence, evidenceErr := a.addEvidence(context.Background(), models.Evidence{RequirementID: run.RequirementID, CriterionID: run.CriterionID, Kind: verificationKind(run.Name), Title: run.Name, Status: evidenceStatus, Inline: run.Output, Metadata: metadata})
 	if evidenceErr == nil {
 		run.EvidenceID = evidence.ID
 	} else {
@@ -237,6 +259,10 @@ func (a *App) StopVerification(ctx context.Context, id string) (models.Verificat
 }
 
 func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, name, command, workingDir string, timeout time.Duration) (models.VerificationRun, error) {
+	return a.runVerification(ctx, requirementID, criterionID, name, command, workingDir, timeout, nil)
+}
+
+func (a *App) runVerification(ctx context.Context, requirementID, criterionID, name, command, workingDir string, timeout time.Duration, binding *verificationBinding) (models.VerificationRun, error) {
 	if requirementID == "" || name == "" || strings.TrimSpace(command) == "" {
 		return models.VerificationRun{}, errors.New("requirementId, name, and command are required")
 	}
@@ -263,6 +289,7 @@ func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, n
 		timeout = 10 * time.Minute
 	}
 	started := time.Now().UTC().Truncate(time.Second)
+	id := uuid.NewString()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var cmd *exec.Cmd
@@ -272,11 +299,13 @@ func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, n
 		cmd = exec.CommandContext(runCtx, "sh", "-c", command)
 	}
 	cmd.Dir = abs
+	sourceBefore := a.verificationSource(abs)
 	prepareManagedCommand(cmd)
 	commandOutput := &tailBuffer{maximum: 32768}
 	cmd.Stdout = commandOutput
 	cmd.Stderr = commandOutput
 	runErr := cmd.Run()
+	sourceAfter := a.verificationSource(abs)
 	output, _ := devai.Redact(commandOutput.String())
 	exit := 0
 	status := "passed"
@@ -288,17 +317,35 @@ func (a *App) RunVerification(ctx context.Context, requirementID, criterionID, n
 			exit = ee.ExitCode()
 		}
 	}
-	evidence, eErr := a.AddEvidence(ctx, models.Evidence{RequirementID: requirementID, CriterionID: criterionID, Kind: verificationKind(name), Title: name, Status: status, Inline: output, Metadata: map[string]string{"command": command, "workingDir": abs}})
+	if verificationSourceChanged(sourceBefore, sourceAfter) {
+		status = "failed"
+		output += "\n[verification source changed or was not clean before/after the command]"
+		if runErr == nil {
+			runErr = errors.New("verification source changed or was not clean before/after the command")
+		}
+	}
+	metadata := verificationSourceMetadata(sourceBefore, sourceAfter)
+	metadata["command"], metadata["workingDir"] = command, abs
+	metadata["runStatus"], metadata["exitCode"] = status, fmt.Sprint(exit)
+	metadata["verificationRunId"] = id
+	taskID := ""
+	if binding != nil {
+		binding.addMetadata(metadata, command)
+		taskID = binding.TaskID
+	}
+	evidence, eErr := a.addEvidence(ctx, models.Evidence{RequirementID: requirementID, CriterionID: criterionID, TaskID: taskID, Kind: verificationKind(name), Title: name, Status: status, Inline: output, Metadata: metadata})
 	if eErr != nil {
 		return models.VerificationRun{}, eErr
 	}
-	r := models.VerificationRun{ID: uuid.NewString(), RequirementID: requirementID, CriterionID: criterionID, Name: name, Command: command, WorkingDir: abs, Status: status, ExitCode: exit, Output: output, StartedAt: started, CompletedAt: time.Now().UTC().Truncate(time.Second), EvidenceID: evidence.ID}
+	displayCommand, _ := devai.Redact(command)
+	displayName, _ := devai.Redact(name)
+	r := models.VerificationRun{ID: id, RequirementID: requirementID, CriterionID: criterionID, Name: displayName, Command: displayCommand, WorkingDir: abs, Status: status, ExitCode: exit, Output: output, StartedAt: started, CompletedAt: time.Now().UTC().Truncate(time.Second), EvidenceID: evidence.ID}
 	r, err = a.Store.CreateVerificationRun(ctx, r)
 	if err != nil {
 		return r, err
 	}
 	if runErr != nil {
-		return r, fmt.Errorf("verification failed with exit code %d", exit)
+		return r, fmt.Errorf("verification failed with exit code %d: %w", exit, runErr)
 	}
 	return a.withVerificationRuntime(r), nil
 }
@@ -311,6 +358,10 @@ func verificationKind(name string) string {
 }
 
 func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt string) (models.AgentSession, error) {
+	return a.startAgentSessionModel(ctx, taskID, provider, "", prompt)
+}
+
+func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, model, prompt string) (models.AgentSession, error) {
 	task, err := a.Store.GetTask(ctx, taskID)
 	if err != nil {
 		return models.AgentSession{}, err
@@ -328,6 +379,19 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 	}
 	if !adapter.Enabled {
 		return models.AgentSession{}, errors.New("agent adapter is disabled")
+	}
+	if model != "" {
+		found := false
+		adapter.Args = append([]string{}, adapter.Args...)
+		for i := range adapter.Args {
+			if strings.Contains(adapter.Args[i], "{{model}}") {
+				found = true
+				adapter.Args[i] = strings.ReplaceAll(adapter.Args[i], "{{model}}", model)
+			}
+		}
+		if !found {
+			return models.AgentSession{}, errors.New("AI Team adapter requires an explicit {{model}} argv placeholder")
+		}
 	}
 	binary, args, err := devagent.BuildCommand(adapter, prompt)
 	if err != nil {
@@ -347,19 +411,33 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 	if err != nil {
 		return models.AgentSession{}, err
 	}
-	cmd := exec.Command(path, args...)
+	responseFile, err := openResponseCapture(logPath+".response", maxAgentResponseBytes)
+	if err != nil {
+		_ = logFile.Close()
+		return models.AgentSession{}, err
+	}
+	cmd := exec.CommandContext(context.Background(), path, args...)
+	for _, argument := range adapter.Args {
+		if strings.Contains(argument, devagent.StdinPromptPlaceholder) {
+			cmd.Stdin = strings.NewReader(prompt)
+			break
+		}
+	}
 	cmd.Dir = task.WorktreePath
 	prepareManagedCommand(cmd)
-	cmd.Stdout = logFile
+	cmd.Stdout = io.MultiWriter(logFile, responseFile)
 	cmd.Stderr = logFile
 	if err = cmd.Start(); err != nil {
-		logFile.Close()
+		_ = responseFile.Close()
+		_ = logFile.Close()
 		return models.AgentSession{}, err
 	}
 	session := models.AgentSession{ID: id, TaskID: taskID, Provider: adapter.ID, Prompt: prompt, WorkingDir: task.WorktreePath, Status: "running", PID: cmd.Process.Pid, LogPath: logPath, StartedAt: time.Now().UTC().Truncate(time.Second)}
 	if session, err = a.Store.CreateAgentSession(ctx, session); err != nil {
-		_ = cmd.Process.Kill()
-		logFile.Close()
+		_ = stopManagedCommand(cmd)
+		_ = cmd.Wait()
+		_ = responseFile.Close()
+		_ = logFile.Close()
 		return session, err
 	}
 	a.mu.Lock()
@@ -369,7 +447,12 @@ func (a *App) StartAgentSession(ctx context.Context, taskID, provider, prompt st
 	go func() {
 		defer a.agentWG.Done()
 		err := cmd.Wait()
-		_ = logFile.Close()
+		if closeErr := responseFile.Close(); err == nil {
+			err = closeErr
+		}
+		if closeErr := logFile.Close(); err == nil {
+			err = closeErr
+		}
 		status := "completed"
 		if err != nil {
 			status = "failed"

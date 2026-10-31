@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -40,6 +41,56 @@ func TestVerificationCreatesEvidenceAndReport(t *testing.T) {
 	}
 	if !report.EvidenceComplete || len(report.Evidence) != 1 || len(report.VerificationRuns) != 1 {
 		t.Fatalf("report=%+v", report)
+	}
+}
+
+func TestVerificationPersistsRedactedCommandWithoutChangingExecution(t *testing.T) {
+	for _, asynchronous := range []bool{false, true} {
+		t.Run(fmt.Sprintf("async=%t", asynchronous), func(t *testing.T) {
+			a := openTestApp(t)
+			ctx := context.Background()
+			req, err := a.CreateRequirement(ctx, "command redaction", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			dir := t.TempDir()
+			const literal = "api_key=review-secret-literal"
+			command := "printf '" + literal + "' > original.txt"
+			if runtime.GOOS == "windows" {
+				command = "Set-Content original.txt '" + literal + "'"
+			}
+			var run models.VerificationRun
+			if asynchronous {
+				run, err = a.StartVerification(ctx, req.ID, "", literal, command, dir, time.Minute)
+			} else {
+				run, err = a.RunVerification(ctx, req.ID, "", literal, command, dir, time.Minute)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(run.Command+run.Name, "review-secret-literal") {
+				t.Fatal("secret returned to client")
+			}
+			if asynchronous {
+				run = waitForVerificationStatus(t, a, req.ID, run.ID, map[string]bool{"passed": true})
+			}
+			data, err := os.ReadFile(filepath.Join(dir, "original.txt"))
+			if err != nil || strings.TrimSpace(string(data)) != literal {
+				t.Fatalf("redaction changed executed command: %q %v", data, err)
+			}
+			runs, err := a.Store.ListVerificationRuns(ctx, req.ID)
+			if err != nil || len(runs) != 1 {
+				t.Fatalf("persisted runs: %+v %v", runs, err)
+			}
+			evidence, err := a.ListEvidence(ctx, req.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			serialized, err := json.Marshal([]any{runs, evidence})
+			if err != nil || strings.Contains(string(serialized), "review-secret-literal") {
+				t.Fatalf("secret persisted: %s %v", serialized, err)
+			}
+		})
 	}
 }
 

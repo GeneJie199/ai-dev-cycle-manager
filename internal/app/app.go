@@ -4,6 +4,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -15,10 +16,16 @@ import (
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/git"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/store"
+	"github.com/GeneJie199/ai-dev-cycle-manager/internal/team"
 )
 
 // App is the backend façade. Wails can bind exported methods on this type later.
 type App struct {
+	Team           *team.Store
+	teamOnce       sync.Once
+	teamErr        error
+	teamMu         sync.Mutex
+	teamActive     map[string]bool
 	Store          *store.Store
 	Git            *git.CLIRunner
 	Codex          agent.CodexAdapter // optional; nil until a real adapter is injected
@@ -52,25 +59,43 @@ func New(dbPath string) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
+	var restoredTeam *team.Store
+	if _, statErr := os.Stat(abs + ".team.db"); statErr == nil {
+		restoredTeam, err = team.Open(abs + ".team.db")
+		if err != nil {
+			_ = st.Close()
+			return nil, err
+		}
+	}
 	if err = st.RecoverRunningAgentSessions(context.Background()); err != nil {
+		if restoredTeam != nil {
+			_ = restoredTeam.Close()
+		}
 		_ = st.Close()
 		return nil, err
 	}
 	if err = st.RecoverRunningVerificationRuns(context.Background()); err != nil {
+		if restoredTeam != nil {
+			_ = restoredTeam.Close()
+		}
 		_ = st.Close()
 		return nil, err
 	}
 	aiService := devai.NewService()
 	aiService.Configs = st
 	aiService.Secrets = devai.NewKeyringSecretStore()
-	return &App{
+	a := &App{
 		Store:         st,
 		Git:           git.NewCLIRunner(),
 		AI:            aiService,
 		DBPath:        abs,
 		processes:     map[string]*runningAgent{},
 		verifications: map[string]*runningVerification{},
-	}, nil
+	}
+	if restoredTeam != nil {
+		a.teamOnce.Do(func() { a.Team = restoredTeam; a.teamActive = map[string]bool{} })
+	}
+	return a, nil
 }
 
 // Close releases resources.
@@ -87,6 +112,9 @@ func (a *App) Close() error {
 	a.mu.Unlock()
 	a.agentWG.Wait()
 	a.verificationWG.Wait()
+	if a.Team != nil {
+		_ = a.Team.Close()
+	}
 	if a.Store != nil {
 		return a.Store.Close()
 	}
@@ -263,12 +291,27 @@ func (a *App) CreateTask(ctx context.Context, requirementID, title, description 
 // LinkTaskToWorktree creates a branch+worktree and links them on the task.
 // Branch = 独立工作版本; Worktree = 隔离开发目录.
 func (a *App) LinkTaskToWorktree(ctx context.Context, repoPath, taskID, branch, worktreePath string) (models.Task, git.WorktreeInfo, error) {
+	return a.linkTaskToWorktree(ctx, repoPath, taskID, branch, worktreePath, false)
+}
+
+func (a *App) linkTaskToWorktree(ctx context.Context, repoPath, taskID, branch, worktreePath string, nextAttempt bool) (models.Task, git.WorktreeInfo, error) {
 	existing, err := a.Store.GetTask(ctx, taskID)
 	if err != nil {
 		return models.Task{}, git.WorktreeInfo{}, err
 	}
-	if existing.WorktreePath != "" {
+	if existing.WorktreePath != "" && !nextAttempt {
 		return models.Task{}, git.WorktreeInfo{}, fmt.Errorf("task already has a linked worktree")
+	}
+	if nextAttempt {
+		sessions, err := a.Store.ListAgentSessions(ctx, taskID)
+		if err != nil {
+			return models.Task{}, git.WorktreeInfo{}, err
+		}
+		for _, session := range sessions {
+			if session.Status == "running" {
+				return models.Task{}, git.WorktreeInfo{}, fmt.Errorf("task still has a running agent session")
+			}
+		}
 	}
 	wt, err := a.AddWorktree(ctx, repoPath, git.WorktreeAddOptions{
 		Path:         worktreePath,

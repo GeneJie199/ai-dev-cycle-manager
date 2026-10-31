@@ -1,9 +1,18 @@
 # DevCycle
 
+
+## v2 development and licensing
+
+Stable: v1.x (historical Apache-2.0 releases). Under development: v2 AI Engineering Team; not GA.
+
+Community Edition: **AGPL-3.0-only** for this development source. Historical release rights remain valid.
+Commercial / OEM licensing available for closed-source redistribution, white-labeling, embedding and other use cases incompatible with AGPL. See [license policy](LICENSE_POLICY.md), [history](LICENSING_HISTORY.md) and [commercial policy](COMMERCIAL_LICENSE.md).
+
+
 DevCycle 是本地优先的 AI 开发生命周期工作台，把一句交付目标转成可编辑计划，再沿着验收标准、开发任务、Agent 会话、验证证据和发布候选形成一条可审计链路。
 
 [![CI](https://github.com/GeneJie199/ai-dev-cycle-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/GeneJie199/ai-dev-cycle-manager/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 ## Screenshot
 
@@ -213,4 +222,8 @@ sh ./scripts/install.sh ./devcycle
 - 当前是单用户、本机工作台，没有多人账户、RBAC 或云同步。
 - 验证命令和 Agent 提示来自本地可信用户，应像脚本一样审核。
 
-发布候选使用 `lifecycle-spec/release-candidate/v1`，ReleaseGuard 会重新校验 readiness 和证据覆盖。Apache-2.0；贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题见 [SECURITY.md](SECURITY.md)。
+发布候选使用 `lifecycle-spec/release-candidate/v1`，ReleaseGuard 会重新校验 readiness 和证据覆盖。AGPL-3.0-only；贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题见 [SECURITY.md](SECURITY.md)。
+
+## AI Team development preview
+
+Open `/team.html` in a locally built DevCycle. Simple and Expert share the durable team runtime, capability/model routing, memory, risk and evidence. First configure an explicit model-aware adapter. Read [runtime](docs/AI_TEAM_RUNTIME.md), [routing](docs/MODEL_ROUTING.md), [memory](docs/PROJECT_MEMORY.md), and [risk](docs/RISK_MODEL.md). This is a development preview, not v2 GA.

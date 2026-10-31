@@ -34,3 +34,6 @@ CI 会执行 `gofmt`、`go vet`、`go test` 与 `go build`，请在提交前本�
 - 一个 PR 只做一件事；不要顺手重构无关代码。
 - Bug 报告请附：OS、`git --version`、复现命令、完整错误输出。
 - 安全问题请走 [SECURITY.md](SECURITY.md) 的私下渠道，不要开公开 Issue。
+
+
+For v2 copyrightable contributions, read [CONTRIBUTOR_POLICY.md](CONTRIBUTOR_POLICY.md). A reviewed CLA appropriate for dual licensing is required before accepting new third-party code; DCO alone is not a commercial relicensing grant.

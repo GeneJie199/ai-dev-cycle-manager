@@ -262,6 +262,11 @@ func Redact(input string) (string, int) {
 		count++
 		return "[REDACTED PRIVATE KEY]"
 	})
+	input = quotedSecretPattern.ReplaceAllStringFunc(input, func(value string) string {
+		count++
+		indices := quotedSecretPattern.FindStringSubmatchIndex(value)
+		return value[:indices[2]] + "[REDACTED]" + value[indices[3]:]
+	})
 	input = secretPattern.ReplaceAllStringFunc(input, func(value string) string {
 		count++
 		match := secretPattern.FindStringSubmatch(value)
@@ -274,6 +279,28 @@ func Redact(input string) (string, int) {
 	})
 	return input, count
 }
+
+// ContainsSecretLiteral allows variable references in stored commands, but never
+// treats an environment reference as permission to store an actual credential.
+func ContainsSecretLiteral(input string) bool {
+	if privateKeyPattern.MatchString(input) || urlSecretPattern.MatchString(input) {
+		return true
+	}
+	for _, match := range secretPattern.FindAllStringSubmatch(input, -1) {
+		if !environmentReference.MatchString(match[3]) {
+			return true
+		}
+	}
+	for _, match := range quotedSecretPattern.FindAllStringSubmatch(input, -1) {
+		if !environmentReference.MatchString(match[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+var environmentReference = regexp.MustCompile(`(?i)^(?:\$[a-z_][a-z0-9_]*|\$env:[a-z_][a-z0-9_]*|\$\{(?:env:)?[a-z_][a-z0-9_]*\}|%[a-z_][a-z0-9_]*%)$`)
+var quotedSecretPattern = regexp.MustCompile(`(?i)(?:password|passwd|token|secret|api[_-]?key)["']?(?:\s*[=:]\s*|\s+)["']([^"'\r\n]+)["']`)
 
 func ExtractJSONObject(output string, result any) error {
 	trimmed := strings.TrimSpace(output)
