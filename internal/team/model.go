@@ -16,6 +16,7 @@ import (
 const Spec = "devcycle.ai-team/v2alpha1"
 
 var safeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
+var productionWord = regexp.MustCompile(`(^|[^a-z0-9])production([^a-z0-9]|$)`)
 
 var Roles = []string{"lead", "frontend", "explorer", "qa", "review"}
 var Capabilities = []string{"coding", "reasoning", "planning", "frontend", "vision", "long_context", "review", "testing", "exploration", "low_cost"}
@@ -366,6 +367,9 @@ func Assess(goal string, files []string) (int, []string) {
 		}
 	}
 	for _, term := range []string{"production", "destructive", "credential", "irreversible", "生产", "凭据", "不可逆", "销毁", "rm -rf", "rm -fr", "remove-item", "terraform apply", "terraform destroy", "kubectl apply", "kubectl delete", "drop database", "drop table", "git push"} {
+		if term == "production" && !productionWord.MatchString(s) {
+			continue
+		}
 		if strings.Contains(s, term) {
 			risk = 4
 			reasons = append(reasons, term)
