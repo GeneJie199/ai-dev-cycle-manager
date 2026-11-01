@@ -9,6 +9,7 @@ import (
 )
 
 func (s *Server) registerTeamRoutes() {
+	s.mux.HandleFunc("GET /api/team/module-links", s.handleModuleLinks)
 	s.mux.HandleFunc("GET /api/team/about", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, team.BuildAbout()) })
 	s.mux.HandleFunc("GET /api/team/license", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
