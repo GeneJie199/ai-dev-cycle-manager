@@ -15,7 +15,9 @@ for (const origin of ['http://127.0.0.136:8766/team.html?x=1#details', 'http://1
       assert.equal(actual.protocol, expected.protocol);
       assert.equal(actual.port, link.dataset.modulePort);
       assert.equal(actual.pathname, '/');
-      assert.equal(actual.search + actual.hash, '');
+      assert.equal(actual.hash, '');
+      assert.equal(actual.searchParams.get('suite-devcycle'),new URL('/',origin).href);
+      assert.equal(new URL(actual.searchParams.get('suite-infrascout')).port,'8765');
     }
   });
 }
@@ -24,7 +26,8 @@ test('Suite configuration uses independent custom module ports', async () => {
   const ports = {'8765':23456,'8770':24567,'8771':25678};
   vm.runInNewContext(source, {URL,fetch:async()=>({ok:true,json:async()=>ports}),window:{location:{href:'http://127.0.0.168:18766/team.html'}},document:{querySelectorAll:()=>links}});
   await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(links.map(link=>link.href),['http://127.0.0.168:23456/','http://127.0.0.168:24567/','http://127.0.0.168:25678/']);
+  assert.deepEqual(links.map(link=>new URL(link.href).port),['23456','24567','25678']);
+  for(const link of links){const target=new URL(link.href);assert.equal(target.searchParams.get('suite-devcycle'),'http://127.0.0.168:18766/');assert.equal(target.searchParams.get('suite-fleetscope'),'http://127.0.0.168:24567/');}
 });
 test('failed configuration on a custom port cannot jump to a different instance', async () => {
   const link={dataset:{modulePort:'8765'},removeAttribute(name){delete this[name]}};
