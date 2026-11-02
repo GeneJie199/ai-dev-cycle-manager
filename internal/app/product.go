@@ -453,15 +453,7 @@ func (a *App) CreateSimpleMission(ctx context.Context, in SimpleMissionInput) (t
 			return team.Mission{}, validationf("configure a model for role %s; no unauthorized provider fallback", role)
 		}
 	}
-	m, err := a.CreateMission(ctx, team.Mission{Repository: in.Repository, Goal: in.Goal, Mode: "simple", Checks: in.Checks, Models: models, Policy: team.Policy{TrustedLocalCLI: true, SourceExport: in.SourceExport, CommitTaskChanges: true, AllowedProviders: in.Providers}, Budget: team.Budget{MaxExecutions: 8, MaxFixes: 1, TimeoutSeconds: 600}})
-	if err != nil {
-		return m, err
-	}
-	s, _ := a.TeamStore()
-	if err = s.SaveProductSetting(ctx, "mission-routing:"+m.ID, bindings); err != nil {
-		return m, err
-	}
-	return m, nil
+	return a.createMission(ctx, team.Mission{Repository: in.Repository, Goal: in.Goal, Mode: "simple", Checks: in.Checks, Models: models, Policy: team.Policy{TrustedLocalCLI: true, SourceExport: in.SourceExport, CommitTaskChanges: true, AllowedProviders: in.Providers}, Budget: team.Budget{MaxExecutions: 8, MaxFixes: 1, TimeoutSeconds: 600}}, bindings)
 }
 func (a *App) routedMission(ctx context.Context, m team.Mission, role string) (team.Mission, error) {
 	s, err := a.TeamStore()

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
 	"net/http"
@@ -11,6 +12,35 @@ import (
 	"testing"
 	"time"
 )
+
+func TestGuidedMissionBindingFailureCannotPublishMission(t *testing.T) {
+	a, input, _ := productFixture(t)
+	ctx := context.Background()
+	if _, err := a.ProbeProductProvider(ctx, "fixture-api"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := a.Team.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection, err := sql.Open("sqlite", a.DBPath+".team.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	_, err = connection.ExecContext(ctx, `CREATE TRIGGER fail_guided_binding BEFORE INSERT ON product_settings WHEN NEW.id LIKE 'mission-routing:%' BEGIN SELECT RAISE(ABORT, 'fixture binding write failure'); END;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.CreateSimpleMission(ctx, SimpleMissionInput{Repository: input.Repository, Goal: "Inspect guide text", Checks: input.Checks, Trust: true, SourceExport: true, Providers: []string{"fixture-api"}})
+	if err == nil {
+		t.Fatal("injected routing write failure was ignored")
+	}
+	after, err := a.Team.List(ctx)
+	if err != nil || len(after) != len(before) {
+		t.Fatal("guided Mission became visible without its authorized provider binding", err)
+	}
+}
 
 type dispatchGateSecrets struct {
 	mu               sync.Mutex

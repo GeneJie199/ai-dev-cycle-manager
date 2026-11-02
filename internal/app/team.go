@@ -24,6 +24,10 @@ func (a *App) TeamStore() (*team.Store, error) {
 }
 
 func (a *App) CreateMission(ctx context.Context, m team.Mission) (team.Mission, error) {
+	return a.createMission(ctx, m, nil)
+}
+
+func (a *App) createMission(ctx context.Context, m team.Mission, bindings []RegisteredModel) (team.Mission, error) {
 	if _, err := a.TeamStore(); err != nil {
 		return m, err
 	}
@@ -129,6 +133,14 @@ func (a *App) CreateMission(ctx context.Context, m team.Mission) (team.Mission, 
 	m.RequirementID = req.ID
 	for _, description := range m.Acceptance {
 		if _, err = a.CreateCriterion(ctx, req.ID, description); err != nil {
+			return m, err
+		}
+	}
+	// Persist guided authorization before the Mission becomes visible. If this
+	// write fails there is no executable Mission; a later Mission-write failure
+	// can leave only an inert orphan binding, never an unbound guided Mission.
+	if bindings != nil {
+		if err = a.Team.SaveProductSetting(ctx, "mission-routing:"+m.ID, bindings); err != nil {
 			return m, err
 		}
 	}
