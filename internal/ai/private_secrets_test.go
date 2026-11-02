@@ -10,7 +10,7 @@ import (
 )
 
 func TestExplicitPrivateCredentialsPermissionsRevokeAndSymlinkRejection(t *testing.T) {
-	s := NewLocalSecretStore(filepath.Join(t.TempDir(), "credentials"))
+	s := NewLocalSecretStore(filepath.Join(physicalCredentialFixtureRoot(t), "credentials"))
 	ctx := context.Background()
 	if runtime.GOOS == "windows" {
 		if _, e := s.SetPrivate(ctx, "fixture", "synthetic-private-value"); e == nil {
@@ -62,7 +62,7 @@ func TestPrivateCredentialDirectorySymlinkAndWidePermissionsRefused(t *testing.T
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows private backend deliberately unsupported")
 	}
-	root := t.TempDir()
+	root := physicalCredentialFixtureRoot(t)
 	target := filepath.Join(root, "actual")
 	os.Mkdir(target, 0700)
 	link := filepath.Join(root, "link")
@@ -76,4 +76,16 @@ func TestPrivateCredentialDirectorySymlinkAndWidePermissionsRefused(t *testing.T
 	if _, e := s.SetPrivate(context.Background(), "fixture", "synthetic"); e == nil {
 		t.Fatal("wide credential directory accepted")
 	}
+}
+
+func physicalCredentialFixtureRoot(t *testing.T) string {
+	t.Helper()
+	// macOS exposes its temporary directory through /var -> /private/var. Use
+	// the physical fixture path so each permission/symlink assertion reaches
+	// the condition it intends to test; production ancestor checks stay strict.
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }

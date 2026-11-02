@@ -18,6 +18,9 @@ type ProviderSnapshot struct {
 
 func (ProviderSnapshot) String() string   { return "ProviderSnapshot{credential:redacted}" }
 func (ProviderSnapshot) GoString() string { return "ProviderSnapshot{credential:redacted}" }
+func (ProviderSnapshot) MarshalJSON() ([]byte, error) {
+	return []byte(`{"credential":"redacted"}`), nil
+}
 
 // ProviderSnapshotStore captures configuration and credential atomically with
 // respect to setup changes. Implementations release their lock before returning.

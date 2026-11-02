@@ -376,7 +376,12 @@ func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, mode
 	if strings.HasPrefix(provider, "api-") {
 		return a.startAPIAgentSession(ctx, task, provider, model, prompt)
 	}
+	a.productMu.Lock()
 	adapter, err := a.GetAgentAdapter(ctx, provider)
+	if err == nil {
+		err = a.validatePinnedProviderDispatch(ctx, adapter.ID, model, adapter)
+	}
+	a.productMu.Unlock()
 	if err != nil {
 		return models.AgentSession{}, fmt.Errorf("agent adapter: %w", err)
 	}

@@ -329,7 +329,8 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 		}
 		break
 	}
-	session, err := a.startAgentSessionModel(context.WithValue(context.WithValue(ctx, apiRoleKey{}, t.Role), apiContextKey{}, chosen.ContextLimit), t.TaskID, chosen.Adapter, chosen.ID, prompt)
+	dispatchCtx := context.WithValue(context.WithValue(context.WithValue(ctx, apiRoleKey{}, t.Role), apiContextKey{}, chosen.ContextLimit), missionDispatchKey{}, m.ID)
+	session, err := a.startAgentSessionModel(dispatchCtx, t.TaskID, chosen.Adapter, chosen.ID, prompt)
 	if err != nil {
 		return a.finishMissionTask(ctx, m, index, ei, err)
 	}

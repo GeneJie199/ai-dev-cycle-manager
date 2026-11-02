@@ -124,6 +124,9 @@ func (a *App) startAPIAgentSession(ctx context.Context, task models.Task, adapte
 	provider := strings.TrimPrefix(adapter, "api-")
 	a.productMu.Lock()
 	providerSnapshot, err := a.captureProviderSnapshot(ctx, provider)
+	if err == nil {
+		err = a.validatePinnedProviderDispatch(ctx, adapter, model, providerSnapshot.Config())
+	}
 	a.productMu.Unlock()
 	if err != nil {
 		return models.AgentSession{}, err
