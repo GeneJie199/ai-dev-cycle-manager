@@ -162,7 +162,7 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md). Use the issue templates for repro
 
 AI 规划和代码解释始终先给出可审阅结果，不会自动写代码、合并分支或批准发布。API 提供方发送前会显示目标地址、模型、脱敏内容和明确的数据边界。
 
-API Key 只保存到操作系统凭据库，或在运行时从指定环境变量读取；SQLite、日志和 HTTP 响应中不保存凭据值。带凭据的远端提供方强制 HTTPS，本机回环地址可以使用 HTTP，请求禁止跨地址重定向并限制响应大小。
+API Key 默认保存到操作系统凭据库，或在运行时从指定环境变量读取。Linux 无系统 Secret Service 时，可在 Web 中显式选择当前用户专属的私有文件后端（目录 0700、文件 0600；拒绝 symlink、非 owner 和宽权限）。私有文件不是 OS 加密；Windows 继续使用 Credential Manager。SQLite、日志和 HTTP 响应中不保存凭据值。带凭据的远端提供方强制 HTTPS，本机回环地址可以使用 HTTP，请求禁止跨地址重定向并限制响应大小。
 
 Agent 命令以可执行文件和参数数组直接启动，不经过 Shell。自定义适配器必须且只能包含一个 `{{prompt}}` 参数占位符，不能注入环境变量或 Shell 片段。详细配置见 [docs/configuration.md](docs/configuration.md)。
 
@@ -227,3 +227,20 @@ sh ./scripts/install.sh ./devcycle
 ## AI Team development preview
 
 Open `/team.html` in a locally built DevCycle. Simple and Expert share the durable team runtime, capability/model routing, memory, risk and evidence. First configure an explicit model-aware adapter. Read [runtime](docs/AI_TEAM_RUNTIME.md), [routing](docs/MODEL_ROUTING.md), [memory](docs/PROJECT_MEMORY.md), and [risk](docs/RISK_MODEL.md). This is a development preview, not v2 GA.
+
+
+## C2 / RC.2：首次使用、Provider 与 Delivery
+
+打开 `/suite.html` 使用统一工作入口，或 `/team.html` 进入 AI Team 引导。先连接并测试正式 Provider，选择或从 Web 创建空 Git 项目，再选择验收检查与执行范围；常规初始化无需编写 Capability Registry JSON。尚未配置模型时仍可查看安装状态、项目、已有记录和各产品本地工具。外部模块“有入口”不代表“健康”，空数据不使用示例指标填充。
+
+Provider 中心复用已有 HTTP Service、OS keyring / env SecretStore、Agent Adapter、Team 路由和 sidecar。API 型号通过用户显式触发的 `/models` 发现后选择，或填入已验证的正式型号；不会写死猜测型号。Codex 引导适配器使用用户正式授权的 CLI 与所选型号。Kimi 未授权时显示 Configuration Required / BLOCKED；聊天订阅不等于 Coding API 权限。
+
+所有 HTTP 生成、连接测试和模型发现都须有明确请求预算。金额以整数百万分之一 CNY 保存，预先按完整请求输入上界与 `max_tokens` 预留费用，次数和金额任一达到上限即阻断。模型发现计入请求次数但无生成 token 费用；正常生成按实际有效 usage 和配置单价结算。缺失、负值、超界或不一致 usage 会保留整笔预留并阻断后续；显式接受完整预留费用后，仍须重新测试连接且只能使用剩余预算。费用是按配置最高适用单价估计，不是服务商账单。预算保存、连接撤销及同 ID 重建均不清零计数；同一数据库的第二个 Team 执行进程被现有独占锁拒绝。请为独立安装使用独立数据目录，不将本地可信单用户边界宣称为多租户隔离。
+
+API Coding 使用严格单对象 JSON 的受控文本编辑协议：最多 100 个已跟踪非敏感文件、上下文编码字节上限、路径 / symlink / `.git` / secret 检查、角色路径权限和整批预先校验。它不提供 shell、搜索、抓取或部署工具；现有 Controller 在本地运行用户选择的真实机器检查。会话、worktree、审计、完整响应哈希、严格 Review、修复循环和 source-bound evidence 均沿用原 Runtime。需要复杂本地工具时使用正式 CLI，而不是假装 API 已拥有未实现工具。
+
+Delivery 页面展示实际修改、已完成 / 未完成任务、真实检查、所有 Review 尝试、风险、真实 Diff 与可下载证据包。没有经过验证的应用预览或启动指令时明确显示不可用，不猜测部署命令；Candidate ready 和 Guard GO 都不等于生产发布授权。共享浅色 / 深色 / 跟随系统主题与移动导航覆盖 Suite、Team、Provider、Delivery 及原工作台子页面。
+
+诊断接口 `GET /api/team/diagnostics/runtime` 仅返回真实数值：goroutines、heapAllocBytes、heapSysBytes、heapInuseBytes、systemBytes、gcCount、uptimeSeconds，并保留 Host / Origin 限制；没有 pprof、堆栈、环境或配置。
+
+本版本仍为 RC。真实 Kimi、三模型协作、24 小时观察和 GA 资格须由独立机器证据确认；界面或本地 fixture 通过不能替代真实 Provider 验收。

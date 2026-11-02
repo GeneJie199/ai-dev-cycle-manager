@@ -24,6 +24,7 @@ type AIProviderInput struct {
 	Headers           map[string]string `json:"headers,omitempty"`
 	Enabled           *bool             `json:"enabled,omitempty"`
 	TimeoutSeconds    int               `json:"timeoutSeconds,omitempty"`
+	SecretStorage     string            `json:"secretStorage,omitempty"`
 	Secret            string            `json:"secret,omitempty"`
 	SecretEnvironment string            `json:"secretEnvironment,omitempty"`
 	ClearSecret       bool              `json:"clearSecret,omitempty"`
@@ -36,6 +37,9 @@ func (a *App) AIProviders(ctx context.Context) ([]devai.ProviderStatus, error) {
 func (a *App) ConfigureAIProvider(ctx context.Context, input AIProviderInput) (devai.ProviderStatus, error) {
 	if a.AI == nil || a.AI.Secrets == nil {
 		return devai.ProviderStatus{}, errors.New("AI provider service is unavailable")
+	}
+	if input.SecretStorage != "" && input.SecretStorage != "keyring" && input.SecretStorage != "private_file" {
+		return devai.ProviderStatus{}, validationf("unsupported credential storage")
 	}
 	if input.Secret != "" && input.SecretEnvironment != "" {
 		return devai.ProviderStatus{}, validationf("choose either a keyring credential or an environment variable")
@@ -59,7 +63,7 @@ func (a *App) ConfigureAIProvider(ctx context.Context, input AIProviderInput) (d
 	oldSecretRef := provider.SecretRef
 	oldSecretValue := ""
 	oldSecretReadable := false
-	if input.Secret != "" && strings.HasPrefix(oldSecretRef, "keyring:") {
+	if input.Secret != "" && (strings.HasPrefix(oldSecretRef, "keyring:") || strings.HasPrefix(oldSecretRef, "private:")) {
 		oldSecretValue, err = a.AI.Secrets.Get(ctx, oldSecretRef)
 		oldSecretReadable = err == nil
 	}
@@ -72,31 +76,55 @@ func (a *App) ConfigureAIProvider(ctx context.Context, input AIProviderInput) (d
 		}
 	} else if input.Secret != "" {
 		provider.SecretRef = "keyring:" + strings.ToLower(strings.TrimSpace(input.ID))
+		if input.SecretStorage == "private_file" {
+			provider.SecretRef = "private:" + strings.ToLower(strings.TrimSpace(input.ID))
+		}
 	}
 	provider, err = devai.NormalizeProviderConfig(provider)
 	if err != nil {
 		return devai.ProviderStatus{}, validationf("%s", err.Error())
 	}
 	if input.Secret != "" {
-		provider.SecretRef, err = a.AI.Secrets.Set(ctx, provider.ID, input.Secret)
+		if input.SecretStorage == "private_file" {
+			private, ok := a.AI.Secrets.(interface {
+				SetPrivate(context.Context, string, string) (string, error)
+			})
+			if !ok {
+				return devai.ProviderStatus{}, validationf("private credential storage unavailable")
+			}
+			provider.SecretRef, err = private.SetPrivate(ctx, provider.ID, input.Secret)
+		} else {
+			provider.SecretRef, err = a.AI.Secrets.Set(ctx, provider.ID, input.Secret)
+		}
 		if err != nil {
-			return devai.ProviderStatus{}, err
+			return devai.ProviderStatus{}, validationf("credential storage failed; select an available secure backend and retry")
 		}
 	}
 	if _, err = a.Store.SaveAIProvider(ctx, provider); err != nil {
 		if input.Secret != "" {
 			if oldSecretRef == provider.SecretRef && oldSecretReadable {
-				_, _ = a.AI.Secrets.Set(ctx, provider.ID, oldSecretValue)
+				if strings.HasPrefix(oldSecretRef, "private:") {
+					if private, ok := a.AI.Secrets.(interface {
+						SetPrivate(context.Context, string, string) (string, error)
+					}); ok {
+						_, _ = private.SetPrivate(ctx, provider.ID, oldSecretValue)
+					}
+				} else {
+					_, _ = a.AI.Secrets.Set(ctx, provider.ID, oldSecretValue)
+				}
 			} else {
 				_ = a.AI.Secrets.Delete(ctx, provider.SecretRef)
 			}
 		}
 		return devai.ProviderStatus{}, err
 	}
-	if oldSecretRef != "" && oldSecretRef != provider.SecretRef && strings.HasPrefix(oldSecretRef, "keyring:") {
+	if oldSecretRef != "" && oldSecretRef != provider.SecretRef && (strings.HasPrefix(oldSecretRef, "keyring:") || strings.HasPrefix(oldSecretRef, "private:")) {
 		if err = a.AI.Secrets.Delete(ctx, oldSecretRef); err != nil {
-			return devai.ProviderStatus{}, fmt.Errorf("provider saved, but the replaced credential could not be removed: %w", err)
+			return devai.ProviderStatus{}, errors.New("provider saved, but the replaced credential could not be removed; secure storage needs attention")
 		}
+	}
+	if err = a.invalidateProductProvider(ctx, provider.ID); err != nil {
+		return devai.ProviderStatus{}, err
 	}
 	return a.aiProviderStatus(ctx, provider.ID)
 }
@@ -109,9 +137,9 @@ func (a *App) DeleteAIProvider(ctx context.Context, id string) error {
 	if err = a.Store.DeleteAIProvider(ctx, id); err != nil {
 		return err
 	}
-	if strings.HasPrefix(provider.SecretRef, "keyring:") && a.AI.Secrets != nil {
+	if (strings.HasPrefix(provider.SecretRef, "keyring:") || strings.HasPrefix(provider.SecretRef, "private:")) && a.AI.Secrets != nil {
 		if err = a.AI.Secrets.Delete(ctx, provider.SecretRef); err != nil {
-			return fmt.Errorf("provider deleted, but its credential could not be removed: %w", err)
+			return errors.New("provider deleted, but its credential could not be removed; secure storage needs attention")
 		}
 	}
 	return nil

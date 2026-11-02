@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/GeneJie199/ai-dev-cycle-manager/internal/models"
+	"github.com/GeneJie199/ai-dev-cycle-manager/internal/team"
+	"path/filepath"
 )
 
 type providerStoreStub struct {
@@ -64,11 +66,12 @@ func TestConfiguredOpenAIProviderRedactsInputAndUsesCredentialHeader(t *testing.
 		}
 		body, _ := io.ReadAll(r.Body)
 		receivedBody = string(body)
-		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": `{"ok":true}`}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 4}, "choices": []any{map[string]any{"message": map[string]string{"content": `{"ok":true}`}}}})
 	}))
 	defer server.Close()
 	config := models.AIProviderConfig{ID: "test-openai", Name: "Test OpenAI", Kind: models.AIProviderCustomOpenAI, BaseURL: server.URL + "/v1", Model: "test-model", APIPath: "/chat/completions", APIKeyHeader: "Authorization", APIKeyPrefix: "Bearer ", SecretRef: "memory:test-openai", Enabled: true, TimeoutSeconds: 10}
 	service := NewService()
+	authorizeProviderFixture(t, service, config.ID)
 	service.Configs = providerStoreStub{providers: map[string]models.AIProviderConfig{config.ID: config}}
 	service.Secrets = &secretStoreStub{values: map[string]string{config.SecretRef: "real-key"}}
 	var result struct {
@@ -98,6 +101,7 @@ func TestProviderDoesNotFollowCredentialedRedirect(t *testing.T) {
 	defer redirect.Close()
 	config := models.AIProviderConfig{ID: "redirect-test", Name: "Redirect Test", Kind: models.AIProviderCustomOpenAI, BaseURL: redirect.URL, Model: "model", APIPath: "/chat", APIKeyHeader: "Authorization", APIKeyPrefix: "Bearer ", SecretRef: "memory:redirect", Enabled: true, TimeoutSeconds: 10}
 	service := NewService()
+	authorizeProviderFixture(t, service, config.ID)
 	service.Configs = providerStoreStub{providers: map[string]models.AIProviderConfig{config.ID: config}}
 	service.Secrets = &secretStoreStub{values: map[string]string{config.SecretRef: "key"}}
 	var result map[string]any
@@ -141,8 +145,8 @@ func TestAnthropicAndGeminiProviderProtocols(t *testing.T) {
 		wantHeader   string
 		responseBody any
 	}{
-		{name: "anthropic", kind: models.AIProviderAnthropic, model: "claude-test", wantPath: "/v1/messages", wantHeader: "x-api-key", responseBody: map[string]any{"content": []any{map[string]string{"type": "text", "text": `{"ok":true}`}}}},
-		{name: "gemini", kind: models.AIProviderGemini, model: "gemini-test", wantPath: "/v1beta/models/gemini-test:generateContent", wantHeader: "x-goog-api-key", responseBody: map[string]any{"candidates": []any{map[string]any{"content": map[string]any{"parts": []any{map[string]string{"text": `{"ok":true}`}}}}}}},
+		{name: "anthropic", kind: models.AIProviderAnthropic, model: "claude-test", wantPath: "/v1/messages", wantHeader: "x-api-key", responseBody: map[string]any{"usage": map[string]int{"input_tokens": 10, "output_tokens": 4}, "content": []any{map[string]string{"type": "text", "text": `{"ok":true}`}}}},
+		{name: "gemini", kind: models.AIProviderGemini, model: "gemini-test", wantPath: "/v1beta/models/gemini-test:generateContent", wantHeader: "x-goog-api-key", responseBody: map[string]any{"usageMetadata": map[string]int{"promptTokenCount": 10, "candidatesTokenCount": 4}, "candidates": []any{map[string]any{"content": map[string]any{"parts": []any{map[string]string{"text": `{"ok":true}`}}}}}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -170,6 +174,7 @@ func TestAnthropicAndGeminiProviderProtocols(t *testing.T) {
 			}
 			config := models.AIProviderConfig{ID: "protocol-" + tt.name, Name: "Protocol " + tt.name, Kind: tt.kind, BaseURL: base, Model: tt.model, SecretRef: "memory:protocol", Enabled: true, TimeoutSeconds: 10}
 			service := NewService()
+			authorizeProviderFixture(t, service, config.ID)
 			service.Configs = providerStoreStub{providers: map[string]models.AIProviderConfig{config.ID: config}}
 			service.Secrets = &secretStoreStub{values: map[string]string{config.SecretRef: "protocol-key"}}
 			var result struct {
@@ -180,4 +185,17 @@ func TestAnthropicAndGeminiProviderProtocols(t *testing.T) {
 			}
 		})
 	}
+}
+
+func authorizeProviderFixture(t *testing.T, s *Service, id string) {
+	t.Helper()
+	store, err := team.Open(filepath.Join(t.TempDir(), "budget.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	if err = store.SaveProviderBudget(context.Background(), models.ProviderBudget{Provider: id, LimitMicros: 5000000, InputMicrosPerMillion: 2000000, OutputMicrosPerMillion: 8000000, MaxCalls: 30, MaxOutputTokens: 2048}); err != nil {
+		t.Fatal(err)
+	}
+	s.Billing = store
 }

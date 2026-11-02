@@ -1,17 +1,29 @@
-# AI Engineering Team v2.0.0-rc.1 Community
+# AI Engineering Team v2.0.0-rc.2 Community
 
-This release candidate adds the DevCycle AI Team Runtime: Mission state machine,
-task DAG, five agent roles, capability registry and model routing, structured
-revisioned memory, R0–R4 risk assessment, execution/worktree provenance, machine
-verification evidence, independent review and release candidate export. Simple
-and Expert interfaces use the same runtime. InfraScout, FleetScope, ReleaseGuard
-and lifecycle-spec preserve the existing product and v0.1 contract surface.
+This candidate adds a guided Web-first Provider/project/Mission setup, explicit
+Ready / Configuration Required / Unsupported / Unavailable states, configured
+role routing, and a Delivery view backed by the existing real Mission evidence.
+API structured-edit execution reuses Agent sessions, isolated Git worktrees,
+controller-owned checks and strict independent review. Public v1 API and schema 3
+remain available; new registry and budget data use the existing Team sidecar.
+
+API generation, connection tests and model discovery require explicit bounded
+request authorization. Requests reserve worst-case configured CNY cost and token
+limits before sending; missing or invalid usage retains the entire reservation
+and blocks further requests. Costs use user-configured conservative rates and
+are estimates, not provider invoices. Metadata requests count toward the call
+limit and have no generation token charge. No search/fetch tools are exposed.
+Credentials use the existing OS keyring/environment service, or an explicitly
+selected Linux owner-only 0700/0600 private-file backend. Private files are not
+OS encryption. Windows uses Credential Manager. API permissions are distinct
+from chat subscriptions. No model name, real credential, three-provider success,
+24-hour stability result, or GA approval is bundled or fabricated.
 
 This is a release candidate for trusted single-user local environments. Generic
 CLI adapters execute with the host user's permissions; worktrees and role path
 checks are not an OS sandbox. Enforcing isolation policies fail closed. R4 is
 blocked. ReleaseGuard GO grants no deployment permission. Production deployment,
-untrusted multi-tenancy, billing, HA and marketplace integrations are not included.
+untrusted multi-tenancy, invoicing, HA and marketplace integrations are not included.
 Unmetered CLI usage is unknown, not an actual invoice; strict monetary/token
 budgets reject unmetered adapters. Model access requires the user's own local CLI
 configuration and source-export consent; no credentials are bundled.

@@ -70,8 +70,8 @@ func NormalizeProviderConfig(config models.AIProviderConfig) (models.AIProviderC
 	if config.APIKeyPrefix == "" {
 		config.APIKeyPrefix = definition.keyPrefix
 	}
-	if config.BaseURL == "" || config.Model == "" {
-		return config, errors.New("provider base URL and model are required")
+	if config.BaseURL == "" {
+		return config, errors.New("provider base URL is required")
 	}
 	if config.Kind == models.AIProviderCustomOpenAI && config.SecretRef != "" && config.APIKeyHeader == "" {
 		return config, errors.New("custom provider credentials require a credential header name")
@@ -163,7 +163,7 @@ func (s *Service) RequestPreview(ctx context.Context, provider, input string) (R
 	return RequestPreview{Provider: config.ID, Kind: config.Kind, Endpoint: endpoint, Model: config.Model, RedactedInput: redacted, RedactionCount: count, HeaderNames: headers, Sends: []string{"the redacted requirement and planning context", "the selected model name", "structured JSON generation instructions"}, Excludes: []string{"API keys and credential values", "private keys", "unselected files", "full environment variables", "Git credentials", "database business rows"}}, nil
 }
 
-func (s *Service) generateHTTP(ctx context.Context, config models.AIProviderConfig, prompt string, maxOutput int) (string, error) {
+func (s *Service) generateHTTP(ctx context.Context, config models.AIProviderConfig, prompt string, maxOutput int) (text string, resultErr error) {
 	config, err := NormalizeProviderConfig(config)
 	if err != nil {
 		return "", err
@@ -171,11 +171,41 @@ func (s *Service) generateHTTP(ctx context.Context, config models.AIProviderConf
 	if !config.Enabled {
 		return "", errors.New("AI provider is disabled")
 	}
+	if config.Model == "" {
+		return "", errors.New("configuration required: choose a model from provider discovery")
+	}
 	endpoint, err := providerEndpoint(config)
 	if err != nil {
 		return "", err
 	}
+	if s.Billing == nil {
+		return "", errors.New("configuration required: explicit provider budget")
+	}
+	select {
+	case paidRequestSlot <- struct{}{}:
+		defer func() { <-paidRequestSlot }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	budget, err := s.Billing.ProviderBudget(ctx, config.ID)
+	if err != nil {
+		return "", errors.New("configuration required: explicit provider budget")
+	}
 	body, err := providerRequestBody(config, prompt)
+	if err != nil {
+		return "", err
+	}
+	var boundedBody map[string]any
+	if err = json.Unmarshal(body, &boundedBody); err != nil {
+		return "", err
+	}
+	switch config.Kind {
+	case models.AIProviderGemini:
+		boundedBody["generationConfig"].(map[string]any)["maxOutputTokens"] = budget.MaxOutputTokens
+	default:
+		boundedBody["max_tokens"] = budget.MaxOutputTokens
+	}
+	body, err = json.Marshal(boundedBody)
 	if err != nil {
 		return "", err
 	}
@@ -198,7 +228,7 @@ func (s *Service) generateHTTP(ctx context.Context, config models.AIProviderConf
 		}
 		secret, secretErr := s.Secrets.Get(runCtx, config.SecretRef)
 		if secretErr != nil {
-			return "", secretErr
+			return "", errors.New("AI provider credential unavailable from secure storage")
 		}
 		if secret == "" || strings.ContainsAny(secret, "\r\n") {
 			return "", errors.New("AI provider credential is empty or invalid")
@@ -210,6 +240,24 @@ func (s *Service) generateHTTP(ctx context.Context, config models.AIProviderConf
 		request.Header.Set(config.APIKeyHeader, credential)
 	}
 	client := &http.Client{Timeout: time.Duration(config.TimeoutSeconds) * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	reservation, reserveErr := s.Billing.ReserveProvider(runCtx, config.ID, len(body)+1024, budget.MaxOutputTokens)
+	if reserveErr != nil {
+		return "", reserveErr
+	}
+	usageKnown := false
+	inputTokens, outputTokens := 0, 0
+	defer func() {
+		settleCtx, settleCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer settleCancel()
+		if settleErr := s.Billing.SettleProvider(settleCtx, reservation, inputTokens, outputTokens, usageKnown); settleErr != nil {
+			text = ""
+			if resultErr != nil {
+				resultErr = fmt.Errorf("%v; %w", resultErr, settleErr)
+			} else {
+				resultErr = settleErr
+			}
+		}
+	}()
 	response, err := client.Do(request)
 	if err != nil {
 		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
@@ -227,9 +275,9 @@ func (s *Service) generateHTTP(ctx context.Context, config models.AIProviderConf
 		return "", fmt.Errorf("%s output exceeded %d bytes", config.ID, maxOutput)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		message, _ := Redact(string(responseBody))
-		return "", fmt.Errorf("%s returned HTTP %d: %s", config.ID, response.StatusCode, truncate(message, 1000))
+		return "", fmt.Errorf("%s returned HTTP %d; check credentials, model and provider status", config.ID, response.StatusCode)
 	}
+	inputTokens, outputTokens, usageKnown = providerUsage(config, responseBody)
 	return providerResponseText(config, responseBody)
 }
 

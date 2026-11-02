@@ -19,6 +19,16 @@ func (a *App) AgentAdapters(ctx context.Context) ([]models.AgentAdapterStatus, e
 	if err != nil {
 		return nil, err
 	}
+	ps, pe := a.ProductProviders(ctx)
+	if pe != nil {
+		return nil, pe
+	}
+	apiStatuses := []models.AgentAdapterStatus{}
+	for _, p := range ps {
+		if strings.HasPrefix(p.Model.Adapter, "api-") {
+			apiStatuses = append(apiStatuses, models.AgentAdapterStatus{AgentAdapterConfig: models.AgentAdapterConfig{ID: p.Model.Adapter, Name: p.Model.Provider + " API edit adapter", Command: "internal:api", Enabled: p.State == "ready", BuiltIn: true}, Available: p.State == "ready", Reason: p.Reason})
+		}
+	}
 	all := append(devagent.BuiltInAdapters(), configured...)
 	statuses := make([]models.AgentAdapterStatus, 0, len(all))
 	for _, adapter := range all {
@@ -50,11 +60,15 @@ func (a *App) AgentAdapters(ctx context.Context) ([]models.AgentAdapterStatus, e
 		}
 		return strings.ToLower(statuses[i].Name) < strings.ToLower(statuses[j].Name)
 	})
-	return statuses, nil
+	return append(statuses, apiStatuses...), nil
 }
 
 func (a *App) GetAgentAdapter(ctx context.Context, id string) (models.AgentAdapterConfig, error) {
 	id = strings.ToLower(strings.TrimSpace(id))
+	if strings.HasPrefix(id, "api-") {
+		c, err := a.Store.GetAIProvider(ctx, strings.TrimPrefix(id, "api-"))
+		return models.AgentAdapterConfig{ID: id, Name: c.Name, Command: "internal:api", Enabled: c.Enabled, BuiltIn: true}, err
+	}
 	if adapter, ok := devagent.BuiltIn(id); ok {
 		return adapter, nil
 	}

@@ -39,6 +39,7 @@ type App struct {
 }
 
 type runningAgent struct {
+	cancel      context.CancelFunc
 	cmd         *exec.Cmd
 	finalStatus string
 }
@@ -83,7 +84,7 @@ func New(dbPath string) (*App, error) {
 	}
 	aiService := devai.NewService()
 	aiService.Configs = st
-	aiService.Secrets = devai.NewKeyringSecretStore()
+	aiService.Secrets = devai.NewLocalSecretStore(filepath.Join(filepath.Dir(abs), ".devcycle-credentials"))
 	a := &App{
 		Store:         st,
 		Git:           git.NewCLIRunner(),
@@ -92,6 +93,7 @@ func New(dbPath string) (*App, error) {
 		processes:     map[string]*runningAgent{},
 		verifications: map[string]*runningVerification{},
 	}
+	a.AI.Billing = a
 	if restoredTeam != nil {
 		a.teamOnce.Do(func() { a.Team = restoredTeam; a.teamActive = map[string]bool{} })
 	}
@@ -103,7 +105,11 @@ func (a *App) Close() error {
 	a.mu.Lock()
 	for _, process := range a.processes {
 		process.finalStatus = "stopped"
-		_ = stopManagedCommand(process.cmd)
+		if process.cancel != nil {
+			process.cancel()
+		} else {
+			_ = stopManagedCommand(process.cmd)
+		}
 	}
 	for _, process := range a.verifications {
 		process.finalStatus = "stopped"

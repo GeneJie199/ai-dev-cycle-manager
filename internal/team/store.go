@@ -59,7 +59,16 @@ func Open(file string) (*Store, error) {
 	if err = os.Chmod(file, 0o600); err != nil {
 		return fail(err)
 	}
-	return &Store{db: db, lease: lease}, nil
+	store := &Store{db: db, lease: lease}
+	if err = store.productTables(context.Background()); err != nil {
+		return fail(err)
+	}
+	// The exclusive process lease proves no live owner can still settle these requests.
+	// Preserve full reserved spend/calls and require explicit acknowledgement after restart.
+	if _, err = db.Exec(`UPDATE provider_budget SET blocked=1 WHERE provider IN (SELECT provider FROM provider_reservations WHERE settled=0);UPDATE provider_reservations SET settled=2 WHERE settled=0;`); err != nil {
+		return fail(err)
+	}
+	return store, nil
 }
 func (s *Store) Close() error {
 	err := s.db.Close()
