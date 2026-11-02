@@ -20,6 +20,24 @@ type providerStoreStub struct {
 	providers map[string]models.AIProviderConfig
 }
 
+func TestThinkingParameterOnlyForOfficialDeepSeekHTTPS(t *testing.T) {
+	for _, base := range []string{"https://api.deepseek.com", "https://api.deepseek.com/v1", "https://API.DEEPSEEK.COM:443/v1", "https://api.deepseek.com.evil.example", "https://other.example", "http://api.deepseek.com", "https://api.deepseek.com:9443"} {
+		raw, err := providerRequestBody(models.AIProviderConfig{Kind: models.AIProviderOpenAICompatible, BaseURL: base, Model: "discovered-model"}, "bounded structured output")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		if err = json.Unmarshal(raw, &body); err != nil {
+			t.Fatal(err)
+		}
+		_, present := body["thinking"]
+		want := base == "https://api.deepseek.com" || base == "https://api.deepseek.com/v1" || base == "https://API.DEEPSEEK.COM:443/v1"
+		if present != want || (present && body["thinking"].(map[string]any)["type"] != "disabled") {
+			t.Fatalf("provider protocol parameter leaked or omitted: %s %s", base, raw)
+		}
+	}
+}
+
 func (s providerStoreStub) GetAIProvider(_ context.Context, id string) (models.AIProviderConfig, error) {
 	provider, ok := s.providers[id]
 	if !ok {
@@ -66,7 +84,7 @@ func TestConfiguredOpenAIProviderRedactsInputAndUsesCredentialHeader(t *testing.
 		}
 		body, _ := io.ReadAll(r.Body)
 		receivedBody = string(body)
-		_ = json.NewEncoder(w).Encode(map[string]any{"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 4}, "choices": []any{map[string]any{"message": map[string]string{"content": `{"ok":true}`}}}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 4}, "choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": `{"ok":true}`}}}})
 	}))
 	defer server.Close()
 	config := models.AIProviderConfig{ID: "test-openai", Name: "Test OpenAI", Kind: models.AIProviderCustomOpenAI, BaseURL: server.URL + "/v1", Model: "test-model", APIPath: "/chat/completions", APIKeyHeader: "Authorization", APIKeyPrefix: "Bearer ", SecretRef: "memory:test-openai", Enabled: true, TimeoutSeconds: 10}
@@ -145,8 +163,8 @@ func TestAnthropicAndGeminiProviderProtocols(t *testing.T) {
 		wantHeader   string
 		responseBody any
 	}{
-		{name: "anthropic", kind: models.AIProviderAnthropic, model: "claude-test", wantPath: "/v1/messages", wantHeader: "x-api-key", responseBody: map[string]any{"usage": map[string]int{"input_tokens": 10, "output_tokens": 4}, "content": []any{map[string]string{"type": "text", "text": `{"ok":true}`}}}},
-		{name: "gemini", kind: models.AIProviderGemini, model: "gemini-test", wantPath: "/v1beta/models/gemini-test:generateContent", wantHeader: "x-goog-api-key", responseBody: map[string]any{"usageMetadata": map[string]int{"promptTokenCount": 10, "candidatesTokenCount": 4}, "candidates": []any{map[string]any{"content": map[string]any{"parts": []any{map[string]string{"text": `{"ok":true}`}}}}}}},
+		{name: "anthropic", kind: models.AIProviderAnthropic, model: "claude-test", wantPath: "/v1/messages", wantHeader: "x-api-key", responseBody: map[string]any{"stop_reason": "end_turn", "usage": map[string]int{"input_tokens": 10, "output_tokens": 4}, "content": []any{map[string]string{"type": "text", "text": `{"ok":true}`}}}},
+		{name: "gemini", kind: models.AIProviderGemini, model: "gemini-test", wantPath: "/v1beta/models/gemini-test:generateContent", wantHeader: "x-goog-api-key", responseBody: map[string]any{"usageMetadata": map[string]int{"promptTokenCount": 10, "candidatesTokenCount": 4}, "candidates": []any{map[string]any{"finishReason": "STOP", "content": map[string]any{"parts": []any{map[string]string{"text": `{"ok":true}`}}}}}}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

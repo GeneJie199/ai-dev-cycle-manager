@@ -122,10 +122,13 @@ func (a *App) startAPIAgentSession(ctx context.Context, task models.Task, adapte
 		return models.AgentSession{}, errors.New("API coding sessions require an authorized Mission role")
 	}
 	provider := strings.TrimPrefix(adapter, "api-")
-	config, err := a.Store.GetAIProvider(ctx, provider)
+	a.productMu.Lock()
+	providerSnapshot, err := a.captureProviderSnapshot(ctx, provider)
+	a.productMu.Unlock()
 	if err != nil {
 		return models.AgentSession{}, err
 	}
+	config := providerSnapshot.Config()
 	if config.Model != model || model == "" {
 		return models.AgentSession{}, errors.New("configured API model changed; reconfigure and verify routing")
 	}
@@ -177,7 +180,7 @@ Snapshot is deliberately bounded to 100 tracked nonsensitive text files and the 
 		defer a.agentWG.Done()
 		defer cancel()
 		var result apiAgentResult
-		meta, runErr := a.AI.GenerateJSON(devai.WithStrictResponse(runCtx), provider, "coding agent", prompt, &result)
+		meta, runErr := a.AI.GenerateJSON(devai.WithProviderSnapshot(devai.WithStrictResponse(runCtx), providerSnapshot), provider, "coding agent", prompt, &result)
 		if runErr == nil {
 			if len(result.Edits) > 10 || len(result.Summary) > 12000 {
 				runErr = errors.New("API edit response exceeds bounded protocol")

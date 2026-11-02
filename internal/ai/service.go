@@ -164,30 +164,23 @@ func (s *Service) GenerateJSON(ctx context.Context, provider, purpose, prompt st
 	if inputChars > maxInput {
 		return GenerationMeta{}, fmt.Errorf("AI %s input exceeds %d characters", purpose, maxInput)
 	}
-	if s.Configs != nil {
-		config, configErr := s.Configs.GetAIProvider(ctx, provider)
-		if configErr == nil {
-			started := time.Now()
-			output, err := s.generateHTTP(ctx, config, prompt, maxOutput)
-			if err != nil {
-				return GenerationMeta{}, err
-			}
-			if err = decodeResponse(ctx, output, result); err != nil {
-				return GenerationMeta{}, fmt.Errorf("parse %s output: %w", provider, err)
-			}
-			return GenerationMeta{Provider: provider, GeneratedAt: time.Now().UTC().Format(time.RFC3339), RedactionCount: redactions, InputChars: inputChars, OutputBytes: len(output), DurationMilliseconds: time.Since(started).Milliseconds(), CostStatus: "usage_accounted_at_configured_cny_rates"}, nil
+	snapshot, configErr := s.providerSnapshot(ctx, provider)
+	if configErr == nil {
+		started := time.Now()
+		output, err := s.generateHTTP(ctx, snapshot, prompt, maxOutput)
+		if err != nil {
+			return GenerationMeta{}, err
 		}
-		if !errors.Is(configErr, sql.ErrNoRows) {
-			return GenerationMeta{}, fmt.Errorf("load AI provider: %w", configErr)
+		if err = decodeResponse(ctx, output, result); err != nil {
+			return GenerationMeta{}, fmt.Errorf("parse %s output: %w", provider, err)
 		}
+		return GenerationMeta{Provider: provider, GeneratedAt: time.Now().UTC().Format(time.RFC3339), RedactionCount: redactions, InputChars: inputChars, OutputBytes: len(output), DurationMilliseconds: time.Since(started).Milliseconds(), CostStatus: "usage_accounted_at_configured_cny_rates"}, nil
 	}
-	binary, args, err := providerCommand(provider, prompt)
-	if model, _ := ctx.Value(cliModelKey{}).(string); model != "" {
-		args = append([]string{"--model", model}, args...)
-		if provider == "codex" {
-			args = append([]string{"exec", "--model", model, "--sandbox", "read-only"}, prompt)
-		}
+	if !errors.Is(configErr, sql.ErrNoRows) {
+		return GenerationMeta{}, fmt.Errorf("load AI provider: %w", configErr)
 	}
+	model, _ := ctx.Value(cliModelKey{}).(string)
+	binary, args, err := providerCommand(provider, prompt, model)
 	if err != nil {
 		return GenerationMeta{}, err
 	}
@@ -246,14 +239,22 @@ func (s *Service) release() {
 	<-slots
 }
 
-func providerCommand(provider, prompt string) (string, []string, error) {
+func providerCommand(provider, prompt, model string) (string, []string, error) {
+	modelArgs := []string{}
+	if model != "" {
+		modelArgs = []string{"--model", model}
+	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "kimi":
-		return "kimi", []string{"-p", prompt}, nil
+		return "kimi", append(modelArgs, "-p", prompt), nil
 	case "codex":
-		return "codex", []string{"exec", "--sandbox", "read-only", prompt}, nil
+		// Connection/planning requests use a disposable non-Git directory. Keep
+		// authentication CLI-managed and explicitly allow only this read-only run.
+		args := []string{"exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never"}
+		args = append(args, modelArgs...)
+		return "codex", append(args, "--", prompt), nil
 	case "claude":
-		return "claude", []string{"-p", prompt}, nil
+		return "claude", append(modelArgs, "-p", prompt), nil
 	default:
 		return "", nil, errors.New("provider must be kimi, codex, or claude")
 	}

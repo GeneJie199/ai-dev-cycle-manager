@@ -21,14 +21,11 @@ type DiscoveredModel struct {
 
 // Discovery is an explicit user action and sends only authentication, never repository content.
 func (s *Service) DiscoverModels(ctx context.Context, id string) ([]DiscoveredModel, error) {
-	c, err := s.Configs.GetAIProvider(ctx, id)
+	snapshot, err := s.providerSnapshot(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	c, err = NormalizeProviderConfig(c)
-	if err != nil {
-		return nil, err
-	}
+	c := snapshot.config
 	if !c.Enabled {
 		return nil, errors.New("provider is disabled")
 	}
@@ -44,16 +41,7 @@ func (s *Service) DiscoverModels(ctx context.Context, id string) ([]DiscoveredMo
 		return nil, err
 	}
 	if c.APIKeyHeader != "" {
-		if s.Secrets == nil {
-			return nil, errors.New("credential store unavailable")
-		}
-		secret, e := s.Secrets.Get(ctx, c.SecretRef)
-		if e != nil {
-			return nil, errors.New("credential is not configured")
-		}
-		if secret == "" || strings.ContainsAny(secret, "\r\n") {
-			return nil, errors.New("invalid credential")
-		}
+		secret := snapshot.credential
 		if c.APIKeyPrefix != "" {
 			secret = c.APIKeyPrefix + " " + secret
 		}

@@ -52,7 +52,7 @@ func TestMeteredAPIUnknownOrInvalidUsageBlocksSubsequentCalls(t *testing.T) {
 					io.WriteString(w, "bad JSON")
 					return
 				}
-				response := map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": `{"ok":true}`}}}}
+				response := map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": `{"ok":true}`}}}}
 				if mode != "missing" {
 					prompt, completion := 10, 10
 					if mode == "negative" {

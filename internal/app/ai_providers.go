@@ -35,6 +35,14 @@ func (a *App) AIProviders(ctx context.Context) ([]devai.ProviderStatus, error) {
 }
 
 func (a *App) ConfigureAIProvider(ctx context.Context, input AIProviderInput) (devai.ProviderStatus, error) {
+	a.productMu.Lock()
+	defer a.productMu.Unlock()
+	a.productRevision++
+	return a.configureAIProvider(ctx, input)
+}
+
+// configureAIProvider requires productMu; guided registration shares the same mutation.
+func (a *App) configureAIProvider(ctx context.Context, input AIProviderInput) (devai.ProviderStatus, error) {
 	if a.AI == nil || a.AI.Secrets == nil {
 		return devai.ProviderStatus{}, errors.New("AI provider service is unavailable")
 	}
@@ -130,6 +138,13 @@ func (a *App) ConfigureAIProvider(ctx context.Context, input AIProviderInput) (d
 }
 
 func (a *App) DeleteAIProvider(ctx context.Context, id string) error {
+	a.productMu.Lock()
+	defer a.productMu.Unlock()
+	a.productRevision++
+	return a.deleteAIProvider(ctx, id)
+}
+
+func (a *App) deleteAIProvider(ctx context.Context, id string) error {
 	provider, err := a.Store.GetAIProvider(ctx, id)
 	if err != nil {
 		return err

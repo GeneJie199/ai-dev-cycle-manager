@@ -73,7 +73,7 @@ func productFixture(t *testing.T) (*App, team.Mission, *httptest.Server) {
 			}
 		}
 		content, _ := json.Marshal(output)
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": string(content)}}}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 10}})
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": string(content)}}}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 10}})
 	}))
 	t.Cleanup(server.Close)
 	in := ProviderRegistration{Transport: "api", Provider: AIProviderInput{ID: "fixture-api", Name: "Fixture API", Kind: models.AIProviderCustomOpenAI, BaseURL: server.URL + "/v1"}, Model: "fixture-model", ContextLimit: 200000, Tier: 2, Roles: team.Roles, Capabilities: team.Capabilities, Budget: &models.ProviderBudget{LimitMicros: 5000000, InputMicrosPerMillion: 2000000, OutputMicrosPerMillion: 8000000, MaxCalls: 30, MaxOutputTokens: 2048}}
@@ -117,6 +117,9 @@ func TestGuidedAPIMissionRealWorktreeFixReviewChecksAndDelivery(t *testing.T) {
 	m, e := a.CreateSimpleMission(ctx, SimpleMissionInput{Repository: input.Repository, Goal: "Update documentation heading", Checks: []string{"git diff --check"}, Trust: true, SourceExport: true, Providers: []string{"fixture-api"}})
 	if e != nil {
 		t.Fatal(e)
+	}
+	if m.Budget.MaxExecutions != 8 || m.Budget.MaxFixes != 1 {
+		t.Fatalf("guided mission exceeds the bounded execution default: %+v", m.Budget)
 	}
 	for n := 0; n < 8 && m.State != "completed" && m.State != "escalated"; n++ {
 		m, e = a.AdvanceMission(ctx, m.ID)

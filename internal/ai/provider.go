@@ -163,11 +163,8 @@ func (s *Service) RequestPreview(ctx context.Context, provider, input string) (R
 	return RequestPreview{Provider: config.ID, Kind: config.Kind, Endpoint: endpoint, Model: config.Model, RedactedInput: redacted, RedactionCount: count, HeaderNames: headers, Sends: []string{"the redacted requirement and planning context", "the selected model name", "structured JSON generation instructions"}, Excludes: []string{"API keys and credential values", "private keys", "unselected files", "full environment variables", "Git credentials", "database business rows"}}, nil
 }
 
-func (s *Service) generateHTTP(ctx context.Context, config models.AIProviderConfig, prompt string, maxOutput int) (text string, resultErr error) {
-	config, err := NormalizeProviderConfig(config)
-	if err != nil {
-		return "", err
-	}
+func (s *Service) generateHTTP(ctx context.Context, snapshot ProviderSnapshot, prompt string, maxOutput int) (text string, resultErr error) {
+	config := snapshot.config
 	if !config.Enabled {
 		return "", errors.New("AI provider is disabled")
 	}
@@ -223,19 +220,9 @@ func (s *Service) generateHTTP(ctx context.Context, config models.AIProviderConf
 		request.Header.Set("Anthropic-Version", "2023-06-01")
 	}
 	if config.APIKeyHeader != "" {
-		if config.SecretRef == "" || s.Secrets == nil {
-			return "", errors.New("AI provider credential is not configured")
-		}
-		secret, secretErr := s.Secrets.Get(runCtx, config.SecretRef)
-		if secretErr != nil {
-			return "", errors.New("AI provider credential unavailable from secure storage")
-		}
-		if secret == "" || strings.ContainsAny(secret, "\r\n") {
-			return "", errors.New("AI provider credential is empty or invalid")
-		}
-		credential := secret
+		credential := snapshot.credential
 		if config.APIKeyPrefix != "" {
-			credential = config.APIKeyPrefix + " " + secret
+			credential = config.APIKeyPrefix + " " + credential
 		}
 		request.Header.Set(config.APIKeyHeader, credential)
 	}
@@ -300,7 +287,14 @@ func providerRequestBody(config models.AIProviderConfig, prompt string) ([]byte,
 	case models.AIProviderGemini:
 		value = map[string]any{"contents": []any{map[string]any{"role": "user", "parts": []map[string]string{{"text": prompt}}}}, "generationConfig": map[string]any{"responseMimeType": "application/json"}}
 	default:
-		value = map[string]any{"model": config.Model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2}
+		body := map[string]any{"model": config.Model, "messages": []map[string]string{{"role": "user", "content": prompt}}, "temperature": 0.2}
+		// DeepSeek enables thinking by default; bounded structured responses use
+		// its documented non-thinking mode, without naming a particular model.
+		// https://api-docs.deepseek.com/guides/thinking_mode/
+		if endpoint, err := url.Parse(config.BaseURL); err == nil && endpoint.Scheme == "https" && strings.EqualFold(endpoint.Hostname(), "api.deepseek.com") && (endpoint.Port() == "" || endpoint.Port() == "443") {
+			body["thinking"] = map[string]string{"type": "disabled"}
+		}
+		value = body
 	}
 	return json.Marshal(value)
 }
@@ -309,7 +303,8 @@ func providerResponseText(config models.AIProviderConfig, body []byte) (string, 
 	switch config.Kind {
 	case models.AIProviderAnthropic:
 		var response struct {
-			Content []struct {
+			StopReason string `json:"stop_reason"`
+			Content    []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"content"`
@@ -317,11 +312,15 @@ func providerResponseText(config models.AIProviderConfig, body []byte) (string, 
 		if err := json.Unmarshal(body, &response); err != nil {
 			return "", err
 		}
+		if response.StopReason != "end_turn" {
+			return "", errors.New("anthropic response did not complete a normal text turn")
+		}
 		var output strings.Builder
 		for _, part := range response.Content {
-			if part.Type == "text" {
-				output.WriteString(part.Text)
+			if part.Type != "text" {
+				return "", errors.New("anthropic response requested unsupported non-text content")
 			}
+			output.WriteString(part.Text)
 		}
 		if output.Len() == 0 {
 			return "", errors.New("anthropic response contained no text")
@@ -330,22 +329,25 @@ func providerResponseText(config models.AIProviderConfig, body []byte) (string, 
 	case models.AIProviderGemini:
 		var response struct {
 			Candidates []struct {
-				Content struct {
-					Parts []struct {
-						Text string `json:"text"`
-					} `json:"parts"`
+				FinishReason string `json:"finishReason"`
+				Content      struct {
+					Parts []map[string]json.RawMessage `json:"parts"`
 				} `json:"content"`
 			} `json:"candidates"`
 		}
 		if err := json.Unmarshal(body, &response); err != nil {
 			return "", err
 		}
-		if len(response.Candidates) == 0 {
-			return "", errors.New("gemini response contained no candidate")
+		if len(response.Candidates) != 1 || response.Candidates[0].FinishReason != "STOP" {
+			return "", errors.New("gemini response did not complete exactly one normal text candidate")
 		}
 		var output strings.Builder
 		for _, part := range response.Candidates[0].Content.Parts {
-			output.WriteString(part.Text)
+			var text string
+			if len(part) != 1 || json.Unmarshal(part["text"], &text) != nil {
+				return "", errors.New("gemini response contained unsupported non-text content")
+			}
+			output.WriteString(text)
 		}
 		if output.Len() == 0 {
 			return "", errors.New("gemini response contained no text")
@@ -354,18 +356,29 @@ func providerResponseText(config models.AIProviderConfig, body []byte) (string, 
 	default:
 		var response struct {
 			Choices []struct {
-				Message struct {
-					Content string `json:"content"`
+				FinishReason string `json:"finish_reason"`
+				Message      struct {
+					Content      string            `json:"content"`
+					Refusal      string            `json:"refusal"`
+					ToolCalls    []json.RawMessage `json:"tool_calls"`
+					FunctionCall json.RawMessage   `json:"function_call"`
 				} `json:"message"`
 			} `json:"choices"`
 		}
 		if err := json.Unmarshal(body, &response); err != nil {
 			return "", err
 		}
-		if len(response.Choices) == 0 || strings.TrimSpace(response.Choices[0].Message.Content) == "" {
+		if len(response.Choices) != 1 || response.Choices[0].FinishReason != "stop" {
+			return "", errors.New("OpenAI-compatible response did not complete exactly one normal text choice")
+		}
+		message := response.Choices[0].Message
+		if message.Refusal != "" || len(message.ToolCalls) != 0 || (len(message.FunctionCall) != 0 && string(message.FunctionCall) != "null") {
+			return "", errors.New("OpenAI-compatible response refused or requested unsupported tools")
+		}
+		if strings.TrimSpace(message.Content) == "" {
 			return "", errors.New("OpenAI-compatible response contained no message content")
 		}
-		return response.Choices[0].Message.Content, nil
+		return message.Content, nil
 	}
 }
 

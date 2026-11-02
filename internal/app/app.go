@@ -21,21 +21,24 @@ import (
 
 // App is the backend façade. Wails can bind exported methods on this type later.
 type App struct {
-	Team           *team.Store
-	teamOnce       sync.Once
-	teamErr        error
-	teamMu         sync.Mutex
-	teamActive     map[string]bool
-	Store          *store.Store
-	Git            *git.CLIRunner
-	Codex          agent.CodexAdapter // optional; nil until a real adapter is injected
-	AI             *devai.Service
-	DBPath         string
-	mu             sync.Mutex
-	processes      map[string]*runningAgent
-	agentWG        sync.WaitGroup
-	verifications  map[string]*runningVerification
-	verificationWG sync.WaitGroup
+	Team       *team.Store
+	teamOnce   sync.Once
+	teamErr    error
+	teamMu     sync.Mutex
+	teamActive map[string]bool
+	Store      *store.Store
+	Git        *git.CLIRunner
+	Codex      agent.CodexAdapter // optional; nil until a real adapter is injected
+	AI         *devai.Service
+	DBPath     string
+	mu         sync.Mutex
+	// productMu serializes setup mutations and probe finalization, never model requests.
+	productMu       sync.Mutex
+	productRevision uint64
+	processes       map[string]*runningAgent
+	agentWG         sync.WaitGroup
+	verifications   map[string]*runningVerification
+	verificationWG  sync.WaitGroup
 }
 
 type runningAgent struct {
@@ -83,7 +86,6 @@ func New(dbPath string) (*App, error) {
 		return nil, err
 	}
 	aiService := devai.NewService()
-	aiService.Configs = st
 	aiService.Secrets = devai.NewLocalSecretStore(filepath.Join(filepath.Dir(abs), ".devcycle-credentials"))
 	a := &App{
 		Store:         st,
@@ -93,6 +95,7 @@ func New(dbPath string) (*App, error) {
 		processes:     map[string]*runningAgent{},
 		verifications: map[string]*runningVerification{},
 	}
+	a.AI.Configs = providerConfigSource{app: a}
 	a.AI.Billing = a
 	if restoredTeam != nil {
 		a.teamOnce.Do(func() { a.Team = restoredTeam; a.teamActive = map[string]bool{} })

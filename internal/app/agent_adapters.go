@@ -80,6 +80,13 @@ func (a *App) GetAgentAdapter(ctx context.Context, id string) (models.AgentAdapt
 }
 
 func (a *App) ConfigureAgentAdapter(ctx context.Context, adapter models.AgentAdapterConfig) (models.AgentAdapterStatus, error) {
+	a.productMu.Lock()
+	defer a.productMu.Unlock()
+	a.productRevision++
+	return a.configureAgentAdapter(ctx, adapter)
+}
+
+func (a *App) configureAgentAdapter(ctx context.Context, adapter models.AgentAdapterConfig) (models.AgentAdapterStatus, error) {
 	if devai.ContainsSecretLiteral(strings.Join(append([]string{adapter.Name, adapter.Description, adapter.Command}, adapter.Args...), "\n")) {
 		return models.AgentAdapterStatus{}, validationf("adapter configuration must not contain secret literals; configure credentials through the CLI environment or keyring")
 	}
@@ -104,6 +111,9 @@ func (a *App) ConfigureAgentAdapter(ctx context.Context, adapter models.AgentAda
 }
 
 func (a *App) DeleteAgentAdapter(ctx context.Context, id string) error {
+	a.productMu.Lock()
+	defer a.productMu.Unlock()
+	a.productRevision++
 	id = strings.ToLower(strings.TrimSpace(id))
 	if devagent.IsBuiltIn(id) {
 		return validationf("built-in adapters cannot be deleted")

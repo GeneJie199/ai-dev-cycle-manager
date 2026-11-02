@@ -56,7 +56,7 @@ func TestAPIAgentRejectsWholeInvalidEditBatchBeforeWriting(t *testing.T) {
 	ctx := context.Background()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		content := `{"summary":"try edits","edits":[{"path":"README.md","content":"changed"},{"path":"../escape.md","content":"outside"}],"findings":[]}`
-		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]string{"content": content}}}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 10}})
+		json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"finish_reason": "stop", "message": map[string]string{"content": content}}}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 10}})
 	}))
 	defer server.Close()
 	config, _ := a.Store.GetAIProvider(ctx, "fixture-api")

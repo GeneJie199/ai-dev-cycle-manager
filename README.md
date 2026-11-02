@@ -235,6 +235,10 @@ Open `/team.html` in a locally built DevCycle. Simple and Expert share the durab
 
 Provider 中心复用已有 HTTP Service、OS keyring / env SecretStore、Agent Adapter、Team 路由和 sidecar。API 型号通过用户显式触发的 `/models` 发现后选择，或填入已验证的正式型号；不会写死猜测型号。Codex 引导适配器使用用户正式授权的 CLI 与所选型号。Kimi 未授权时显示 Configuration Required / BLOCKED；聊天订阅不等于 Coding API 权限。
 
+连接测试只验证请求期间保持不变的配置；更新、撤销连接或更改角色时，晚到的测试响应不能恢复 Ready。生成、型号发现、连接测试与 API Coding 都先原子捕获地址、型号及对应凭据，再释放配置锁发起网络请求，避免更新连接时把新凭据发给旧地址。捕获的凭据只留在内存，不进入响应或审计。Codex 的连接测试在临时非 Git 目录运行，明确使用官方 CLI 的 read-only、ephemeral 与 skip-git-repo-check 参数。Simple Mission 默认最多执行 8 次、修复 1 次。
+
+结构化 API 响应必须有明确的正常结束状态；截断、过滤、拒绝、工具调用、缺少结束状态或多候选响应均失败，已有用量仍入账且不会自动重试。官方 HTTPS `api.deepseek.com:443` 使用明确的非思考模式，避免默认思考占用有限输出；其他兼容服务不附加该参数。协议依据：[DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/) 与 [Create Chat Completion](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
 所有 HTTP 生成、连接测试和模型发现都须有明确请求预算。金额以整数百万分之一 CNY 保存，预先按完整请求输入上界与 `max_tokens` 预留费用，次数和金额任一达到上限即阻断。模型发现计入请求次数但无生成 token 费用；正常生成按实际有效 usage 和配置单价结算。缺失、负值、超界或不一致 usage 会保留整笔预留并阻断后续；显式接受完整预留费用后，仍须重新测试连接且只能使用剩余预算。费用是按配置最高适用单价估计，不是服务商账单。预算保存、连接撤销及同 ID 重建均不清零计数；同一数据库的第二个 Team 执行进程被现有独占锁拒绝。请为独立安装使用独立数据目录，不将本地可信单用户边界宣称为多租户隔离。
 
 API Coding 使用严格单对象 JSON 的受控文本编辑协议：最多 100 个已跟踪非敏感文件、上下文编码字节上限、路径 / symlink / `.git` / secret 检查、角色路径权限和整批预先校验。它不提供 shell、搜索、抓取或部署工具；现有 Controller 在本地运行用户选择的真实机器检查。会话、worktree、审计、完整响应哈希、严格 Review、修复循环和 source-bound evidence 均沿用原 Runtime。需要复杂本地工具时使用正式 CLI，而不是假装 API 已拥有未实现工具。

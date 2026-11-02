@@ -68,6 +68,9 @@ func providerDigest(e RegisteredModel, config any) string {
 	return hex.EncodeToString(digest[:])
 }
 func (a *App) RegisterProductProvider(ctx context.Context, in ProviderRegistration) ([]ProductProvider, error) {
+	a.productMu.Lock()
+	defer a.productMu.Unlock()
+	a.productRevision++
 	if devai.ContainsSecretLiteral(in.Model + "\n" + in.Provider.Name + "\n" + in.Provider.BaseURL) {
 		return nil, validationf("configuration contains a secret literal; use the credential field")
 	}
@@ -77,8 +80,8 @@ func (a *App) RegisterProductProvider(ctx context.Context, in ProviderRegistrati
 	if in.Model == "" && in.Transport == "cli" {
 		return nil, validationf("enter the exact model supported by your official CLI")
 	}
-	if in.ContextLimit < 1024 || in.ContextLimit > 2000000 || in.Tier < 0 || in.Tier > 3 {
-		return nil, validationf("verified context limit and tier 0–3 required")
+	if in.ContextLimit < 1024 || in.ContextLimit > 2000000 || in.Tier < 0 || in.Tier > 2 {
+		return nil, validationf("verified context limit and tier 0–2 required")
 	}
 	if len(in.Roles) == 0 || len(in.Capabilities) == 0 {
 		return nil, validationf("select explicit roles and capabilities")
@@ -109,13 +112,13 @@ func (a *App) RegisterProductProvider(ctx context.Context, in ProviderRegistrati
 			return nil, validationf("this guided CLI setup supports official Codex only; Kimi requires a supported authorized API or verified Expert adapter, subscription alone is not API access")
 		}
 		adapter = "guided-codex"
-		_, err := a.ConfigureAgentAdapter(ctx, models.AgentAdapterConfig{ID: adapter, Name: "Official Codex guided", Command: "codex", Args: []string{"exec", "--ephemeral", "--model", "{{model}}", "--sandbox", "workspace-write", "--color", "never", "{{prompt_stdin}}"}, Capabilities: []string{"code_editing", "non_interactive", "worktree"}, Enabled: true})
+		_, err := a.configureAgentAdapter(ctx, models.AgentAdapterConfig{ID: adapter, Name: "Official Codex guided", Command: "codex", Args: []string{"exec", "--ephemeral", "--model", "{{model}}", "--sandbox", "workspace-write", "--color", "never", "{{prompt_stdin}}"}, Capabilities: []string{"code_editing", "non_interactive", "worktree"}, Enabled: true})
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		in.Provider.Model = in.Model
-		if _, err := a.ConfigureAIProvider(ctx, in.Provider); err != nil {
+		if _, err := a.configureAIProvider(ctx, in.Provider); err != nil {
 			return nil, err
 		}
 		if in.Budget != nil {
@@ -241,9 +244,68 @@ func (a *App) ProductProviders(ctx context.Context) ([]ProductProvider, error) {
 	return out, nil
 }
 func (a *App) ProbeProductProvider(ctx context.Context, id string) ([]ProductProvider, error) {
-	entries, err := a.registeredModels(ctx)
+	a.productMu.Lock()
+	entry, config, revision, err := a.productProbeSnapshot(ctx, id)
+	if err == nil && strings.HasPrefix(entry.Model.Adapter, "api-") {
+		var snapshot devai.ProviderSnapshot
+		snapshot, err = devai.CaptureProviderSnapshot(ctx, config.(models.AIProviderConfig), a.AI.Secrets)
+		ctx = devai.WithProviderSnapshot(ctx, snapshot)
+	}
+	a.productMu.Unlock()
 	if err != nil {
 		return nil, err
+	}
+	var result struct {
+		OK bool `json:"ok"`
+	}
+	if strings.HasPrefix(entry.Model.Adapter, "api-") {
+		_, err = a.TestAIProvider(ctx, id)
+	} else {
+		_, err = a.AI.GenerateJSON(devai.WithCLIModel(ctx, entry.Model.ID), id, "model connection", `Return exactly {"ok":true}; do not edit files.`, &result)
+		if err == nil && !result.OK {
+			err = errors.New("model did not satisfy structured connection test")
+		}
+	}
+	// A network request must not block setup changes. A late result can only verify
+	// the unchanged setup it captured, and must not resurrect a revoked provider.
+	a.productMu.Lock()
+	defer a.productMu.Unlock()
+	if a.productRevision != revision {
+		return nil, validationf("provider setup changed during connection test; test the current configuration again")
+	}
+	currentEntry, currentConfig, _, snapshotErr := a.productProbeSnapshot(ctx, id)
+	if snapshotErr != nil || providerDigest(entry, config) != providerDigest(currentEntry, currentConfig) {
+		return nil, validationf("provider setup changed during connection test; test the current configuration again")
+	}
+	entries, loadErr := a.registeredModels(ctx)
+	if loadErr != nil {
+		return nil, loadErr
+	}
+	for i := range entries {
+		if entries[i].Model.Provider != id {
+			continue
+		}
+		e := &entries[i]
+		e.VerifiedDigest, e.VerifiedAt, e.LastError = "", "", ""
+		if err != nil {
+			e.LastError, _ = devai.Redact(err.Error())
+		} else {
+			e.VerifiedAt = time.Now().UTC().Format(time.RFC3339)
+			e.VerifiedDigest = providerDigest(entry, config)
+		}
+		if saveErr := a.saveRegisteredModels(ctx, entries); saveErr != nil {
+			return nil, saveErr
+		}
+		return a.ProductProviders(ctx)
+	}
+	return nil, validationf("configure this provider first")
+}
+
+// productProbeSnapshot requires productMu and performs no model request.
+func (a *App) productProbeSnapshot(ctx context.Context, id string) (RegisteredModel, any, uint64, error) {
+	entries, err := a.registeredModels(ctx)
+	if err != nil {
+		return RegisteredModel{}, nil, 0, err
 	}
 	index := -1
 	for i := range entries {
@@ -252,38 +314,16 @@ func (a *App) ProbeProductProvider(ctx context.Context, id string) ([]ProductPro
 		}
 	}
 	if index < 0 {
-		return nil, validationf("configure this provider first")
+		return RegisteredModel{}, nil, 0, validationf("configure this provider first")
 	}
-	e := &entries[index]
-	var result struct {
-		OK bool `json:"ok"`
-	}
-	if strings.HasPrefix(e.Model.Adapter, "api-") {
-		_, err = a.TestAIProvider(ctx, id)
-	} else {
-		_, err = a.AI.GenerateJSON(devai.WithCLIModel(ctx, e.Model.ID), id, "model connection", `Return exactly {"ok":true}; do not edit files.`, &result)
-		if err == nil && !result.OK {
-			err = errors.New("model did not satisfy structured connection test")
-		}
-	}
-	e.VerifiedDigest = ""
-	e.LastError = ""
-	if err != nil {
-		e.LastError, _ = devai.Redact(err.Error())
-	} else {
-		config, ce := a.currentProviderConfig(ctx, *e)
-		if ce != nil {
-			return nil, ce
-		}
-		e.VerifiedAt = time.Now().UTC().Format(time.RFC3339)
-		e.VerifiedDigest = providerDigest(*e, config)
-	}
-	if se := a.saveRegisteredModels(ctx, entries); se != nil {
-		return nil, se
-	}
-	return a.ProductProviders(ctx)
+	entry := entries[index]
+	config, err := a.currentProviderConfig(ctx, entry)
+	return entry, config, a.productRevision, err
 }
 func (a *App) RevokeProductProvider(ctx context.Context, id string) error {
+	a.productMu.Lock()
+	defer a.productMu.Unlock()
+	a.productRevision++
 	entries, err := a.registeredModels(ctx)
 	if err != nil {
 		return err
@@ -295,7 +335,7 @@ func (a *App) RevokeProductProvider(ctx context.Context, id string) error {
 		}
 	}
 	if id != "codex" {
-		if err = a.DeleteAIProvider(ctx, id); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err = a.deleteAIProvider(ctx, id); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
 	}
@@ -413,7 +453,7 @@ func (a *App) CreateSimpleMission(ctx context.Context, in SimpleMissionInput) (t
 			return team.Mission{}, validationf("configure a model for role %s; no unauthorized provider fallback", role)
 		}
 	}
-	m, err := a.CreateMission(ctx, team.Mission{Repository: in.Repository, Goal: in.Goal, Mode: "simple", Checks: in.Checks, Models: models, Policy: team.Policy{TrustedLocalCLI: true, SourceExport: in.SourceExport, CommitTaskChanges: true, AllowedProviders: in.Providers}, Budget: team.Budget{MaxExecutions: 12, MaxFixes: 1, TimeoutSeconds: 600}})
+	m, err := a.CreateMission(ctx, team.Mission{Repository: in.Repository, Goal: in.Goal, Mode: "simple", Checks: in.Checks, Models: models, Policy: team.Policy{TrustedLocalCLI: true, SourceExport: in.SourceExport, CommitTaskChanges: true, AllowedProviders: in.Providers}, Budget: team.Budget{MaxExecutions: 8, MaxFixes: 1, TimeoutSeconds: 600}})
 	if err != nil {
 		return m, err
 	}
@@ -447,7 +487,16 @@ func (a *App) routedMission(ctx context.Context, m team.Mission, role string) (t
 		}
 		for _, p := range current {
 			if p.State == "ready" && p.Model.Provider == b.Model.Provider && p.Model.ID == b.Model.ID && p.VerifiedDigest == b.VerifiedDigest {
-				models = append(models, b.Model)
+				model := b.Model
+				// Only retain the advisory outcome computed for this mission. The
+				// verified binding continues to own capabilities and permissions.
+				for _, evaluated := range m.Models {
+					if evaluated.Provider == model.Provider && evaluated.ID == model.ID && evaluated.Adapter == model.Adapter {
+						model.Evaluation = evaluated.Evaluation
+						break
+					}
+				}
+				models = append(models, model)
 			}
 		}
 	}
@@ -486,6 +535,9 @@ func (a *App) invalidateProductProvider(ctx context.Context, id string) error {
 }
 
 func (a *App) ResumeProviderAfterUncertainUsage(ctx context.Context, id string) error {
+	a.productMu.Lock()
+	defer a.productMu.Unlock()
+	a.productRevision++
 	s, err := a.TeamStore()
 	if err != nil {
 		return err
