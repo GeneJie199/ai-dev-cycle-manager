@@ -35,3 +35,6 @@ Thumbs.db
 /*-tests.log
 /baseline-suite.log
 /AI-DEV-V2-C0-DELIVERY.zip*
+
+# Explicit local credential backend: never include secrets in source.
+.devcycle-credentials/

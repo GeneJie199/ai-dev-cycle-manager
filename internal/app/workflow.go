@@ -373,7 +373,15 @@ func (a *App) startAgentSessionModel(ctx context.Context, taskID, provider, mode
 	if prompt == "" {
 		return models.AgentSession{}, errors.New("prompt is required")
 	}
+	if strings.HasPrefix(provider, "api-") {
+		return a.startAPIAgentSession(ctx, task, provider, model, prompt)
+	}
+	a.productMu.Lock()
 	adapter, err := a.GetAgentAdapter(ctx, provider)
+	if err == nil {
+		err = a.validatePinnedProviderDispatch(ctx, adapter.ID, model, adapter)
+	}
+	a.productMu.Unlock()
 	if err != nil {
 		return models.AgentSession{}, fmt.Errorf("agent adapter: %w", err)
 	}
@@ -484,10 +492,12 @@ func (a *App) StopAgentSession(ctx context.Context, id string) (models.AgentSess
 		process.finalStatus = "stopped"
 	}
 	a.mu.Unlock()
-	if process == nil || process.cmd.Process == nil {
+	if process == nil || (process.cancel == nil && (process.cmd == nil || process.cmd.Process == nil)) {
 		return models.AgentSession{}, errors.New("agent session is not running in this process")
 	}
-	if err := stopManagedCommand(process.cmd); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if process.cancel != nil {
+		process.cancel()
+	} else if err := stopManagedCommand(process.cmd); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return models.AgentSession{}, fmt.Errorf("stop agent session: %w", err)
 	}
 	ended := time.Now().UTC().Truncate(time.Second)

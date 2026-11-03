@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#17211e">
 <title>DevCycle 工作台</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/suite-design.css"><script src="/suite-ui.js" defer></script>
 </head>
-<body>
+<body data-suite-product="devcycle" data-suite-nav="#mainnav">
 <a class="skip-link" href="#main-content">跳到主要内容</a>
-<header class="topbar">
+<header class="topbar" data-ui-header>
   <a class="product-brand" href="#/workbench" aria-label="DevCycle 工作台">
     <span class="brand-mark"><i data-lucide="workflow"></i></span>
     <span><small>AI DEVOPS OPEN SUITE</small><strong>DevCycle</strong></span>
@@ -28,8 +28,8 @@
   </div>
 </header>
 
-<nav id="mainnav" aria-label="主导航">
-  <a href="/team.html"><i data-lucide="users"></i><span>AI Team · v2</span></a>
+<nav id="mainnav" aria-label="主导航"><a href="/suite.html" data-ui-link><i data-lucide="house"></i><span>Suite 工作入口</span></a>
+  <a href="/team.html" data-ui-link><i data-lucide="users"></i><span>AI Team · v2</span></a>
   <a href="#/workbench" data-nav="workbench"><i data-lucide="layout-dashboard"></i><span>工作台</span></a>
   <a href="#/activity" data-nav="activity"><i data-lucide="radio"></i><span>活动</span><span id="live-count" class="nav-count hidden">0</span></a>
   <a href="#/git" data-nav="git"><i data-lucide="git-branch"></i><span>代码</span></a>
@@ -38,7 +38,7 @@
 
 <div id="toast" class="hidden" role="status" aria-live="polite"></div>
 
-<main id="main-content" tabindex="-1">
+<main id="main-content" tabindex="-1" data-ui-main>
   <section id="view-workbench" class="view active" aria-label="需求工作台">
     <h1 class="sr-only">DevCycle 研发交付工作台</h1>
     <div class="wb-layout">
@@ -144,7 +144,7 @@
   <section id="view-settings" class="view" aria-label="设置">
     <div class="page-heading"><div><span class="eyebrow">本地配置</span><h2>设置</h2></div></div>
     <nav class="settings-nav"><a href="#/settings/ai" data-settings-tab="ai">AI 模型</a><a href="#/settings/agents" data-settings-tab="agents">Agent 适配器</a><a href="#/settings/repos" data-settings-tab="repos">仓库</a></nav>
-    <section data-settings-panel="ai"><div class="section-heading"><div><h3>AI 模型提供方</h3><p>凭据仅保存到系统凭据库或环境变量。</p></div><button class="btn" type="button" data-open-composer="provider"><i data-lucide="plus"></i>添加 API</button></div><div id="provider-list" class="provider-grid"></div><details class="composer settings-composer" data-composer="provider"><summary>配置 AI API</summary><form id="form-ai-provider"><div class="grid-3"><label>ID<input name="id" required pattern="[a-z][a-z0-9._-]{1,63}"></label><label>名称<input name="name" required></label><label>协议<select name="kind"><option value="openai_compatible">OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option><option value="local_openai">本地 OpenAI / Ollama</option><option value="custom_openai">自定义 OpenAI</option></select></label></div><div class="grid-2"><label>服务地址<input name="baseUrl" placeholder="留空使用协议默认值"></label><label>模型<input name="model" required></label></div><div class="grid-2"><label>API Key<input name="secret" type="password" autocomplete="new-password"></label><label>或环境变量<input name="secretEnvironment" placeholder="例如 OPENAI_API_KEY"></label></div><details class="advanced"><summary>高级设置</summary><div class="grid-3"><label>API 路径<input name="apiPath"></label><label>凭据 Header<input name="apiKeyHeader"></label><label>凭据前缀<input name="apiKeyPrefix" placeholder="Bearer"></label></div><label>超时秒数<input name="timeoutSeconds" type="number" min="5" max="600" value="120"></label></details><label class="toggle"><input name="enabled" type="checkbox" checked><span>启用提供方</span></label><div class="actions"><button class="btn" type="submit">保存配置</button><button class="btn ghost" type="reset">清空</button></div></form></details></section>
+    <section data-settings-panel="ai"><div class="provider-center-prompt"><h3>统一 Provider 中心 / Provider Center</h3><p>模型发现、凭据、预算、角色路由和连接验证在同一配置中心完成；API 测试会计入明确预算。</p><a class="btn" href="/team.html#providers">打开 Provider 中心</a></div><details><summary>Expert · 兼容 API 配置</summary><div class="section-heading"><div><h3>AI 模型提供方</h3><p>凭据仅保存到系统凭据库或环境变量。</p></div><button class="btn" type="button" data-open-composer="provider"><i data-lucide="plus"></i>添加 API</button></div><div id="provider-list" class="provider-grid"></div><details class="composer settings-composer" data-composer="provider"><summary>配置 AI API</summary><form id="form-ai-provider"><div class="grid-3"><label>ID<input name="id" required pattern="[a-z][a-z0-9._-]{1,63}"></label><label>名称<input name="name" required></label><label>协议<select name="kind"><option value="openai_compatible">OpenAI Compatible</option><option value="anthropic">Anthropic</option><option value="gemini">Gemini</option><option value="local_openai">本地 OpenAI / Ollama</option><option value="custom_openai">自定义 OpenAI</option></select></label></div><div class="grid-2"><label>服务地址<input name="baseUrl" placeholder="留空使用协议默认值"></label><label>模型<input name="model" required></label></div><div class="grid-2"><label>API Key<input name="secret" type="password" autocomplete="new-password"></label><label>或环境变量<input name="secretEnvironment" placeholder="例如 OPENAI_API_KEY"></label></div><details class="advanced"><summary>高级设置</summary><div class="grid-3"><label>API 路径<input name="apiPath"></label><label>凭据 Header<input name="apiKeyHeader"></label><label>凭据前缀<input name="apiKeyPrefix" placeholder="Bearer"></label></div><label>超时秒数<input name="timeoutSeconds" type="number" min="5" max="600" value="120"></label></details><label class="toggle"><input name="enabled" type="checkbox" checked><span>启用提供方</span></label><div class="actions"><button class="btn" type="submit">保存配置</button><button class="btn ghost" type="reset">清空</button></div></form></details></details></section>
     <section data-settings-panel="agents"><div class="section-heading"><div><h3>Agent 适配器</h3><p>命令以参数数组直接执行，不经过 Shell。</p></div><button class="btn" type="button" data-open-composer="adapter"><i data-lucide="plus"></i>添加适配器</button></div><div id="adapter-list" class="provider-grid"></div><details class="composer settings-composer" data-composer="adapter"><summary>配置自定义适配器</summary><form id="form-agent-adapter"><div class="grid-2"><label>ID<input name="id" required pattern="[a-z][a-z0-9._-]{1,63}"></label><label>名称<input name="name" required></label></div><label>说明<input name="description" maxlength="500"></label><label>可执行程序<input name="command" required placeholder="命令名称或绝对路径"></label><label>参数（每行一个，必须包含一次 {{prompt}}）<textarea name="args" rows="4" required>run&#10;{{prompt}}</textarea></label><label>能力（每行一个）<textarea name="capabilities" rows="2">code_editing&#10;non_interactive&#10;worktree</textarea></label><label class="toggle"><input name="enabled" type="checkbox" checked><span>启用适配器</span></label><div class="actions"><button class="btn" type="submit">保存适配器</button></div></form></details></section>
     <section data-settings-panel="repos"><div class="section-heading"><div><h3>本地仓库</h3><p>登记路径不会修改仓库内容。</p></div></div><form id="form-import-repo" class="toolbar-band"><label for="repo-path">仓库路径<input id="repo-path" name="path" required placeholder="C:\work\project 或 /home/me/project"></label><button type="submit" class="btn"><i data-lucide="folder-plus"></i>导入仓库</button></form><div id="repo-list" class="list"></div></section>
   </section>
@@ -152,7 +152,7 @@
 
 <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form method="dialog" class="dialog-card"><header><h2 id="confirm-title">确认操作</h2><button value="cancel" class="icon-btn" aria-label="关闭"><i data-lucide="x"></i></button></header><p id="confirm-message"></p><footer><button value="cancel" class="btn ghost">取消</button><button id="confirm-submit" value="confirm" class="btn danger-fill">确认</button></footer></form></dialog>
 <dialog id="ai-request-dialog" aria-labelledby="ai-request-title"><form method="dialog" class="dialog-card wide"><header><div><span class="eyebrow ai">发送前检查</span><h2 id="ai-request-title">AI 请求预览</h2></div><button value="cancel" class="icon-btn" aria-label="关闭"><i data-lucide="x"></i></button></header><div id="ai-request-preview"></div><footer><button value="cancel" class="btn ghost">取消</button><button value="confirm" class="btn ai-btn"><i data-lucide="send"></i>确认发送</button></footer></form></dialog>
-<footer class="app-footer"><span><i data-lucide="lock-keyhole"></i>仅监听本机，数据保存于本地 SQLite</span><span>DevCycle v1</span></footer>
+<footer class="app-footer"><span><i data-lucide="lock-keyhole"></i>仅监听本机，数据保存于本地 SQLite</span><span>DevCycle Community · 2.0.0-rc.2</span></footer>
 <script src="/vendor/lucide.min.js"></script><script src="/suite.js"></script><script src="/app.js"></script>
 </body>
 </html>

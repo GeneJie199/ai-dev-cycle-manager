@@ -8,7 +8,7 @@ function updateModuleLinks(ports) {
     target.port = String(ports[port] || port);
     routes[name] = target.href;
   }
-  for (const link of document.querySelectorAll("nav a[data-module-port]")) {
+  for (const link of document.querySelectorAll("a[data-module-port]")) {
     const target = new URL(routes[names[link.dataset.modulePort]]);
     // Other module switchers already preserve this explicit Suite context.
     for (const [name, route] of Object.entries(routes)) target.searchParams.set(`suite-${name}`, route);
@@ -16,7 +16,7 @@ function updateModuleLinks(ports) {
   }
 }
 // A custom-port instance must not briefly link to another default-port instance.
-for (const link of document.querySelectorAll("nav a[data-module-port]")) {
+for (const link of document.querySelectorAll("a[data-module-port]")) {
   link.removeAttribute("href");
 }
 fetch("/api/team/module-links").then(response => {

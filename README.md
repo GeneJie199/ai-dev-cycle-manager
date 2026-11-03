@@ -162,7 +162,7 @@ Start with [CONTRIBUTING.md](CONTRIBUTING.md). Use the issue templates for repro
 
 AI 规划和代码解释始终先给出可审阅结果，不会自动写代码、合并分支或批准发布。API 提供方发送前会显示目标地址、模型、脱敏内容和明确的数据边界。
 
-API Key 只保存到操作系统凭据库，或在运行时从指定环境变量读取；SQLite、日志和 HTTP 响应中不保存凭据值。带凭据的远端提供方强制 HTTPS，本机回环地址可以使用 HTTP，请求禁止跨地址重定向并限制响应大小。
+API Key 默认保存到操作系统凭据库，或在运行时从指定环境变量读取。Linux 无系统 Secret Service 时，可在 Web 中显式选择当前用户专属的私有文件后端（目录 0700、文件 0600；拒绝 symlink、非 owner 和宽权限）。私有文件不是 OS 加密；Windows 继续使用 Credential Manager。SQLite、日志和 HTTP 响应中不保存凭据值。带凭据的远端提供方强制 HTTPS，本机回环地址可以使用 HTTP，请求禁止跨地址重定向并限制响应大小。
 
 Agent 命令以可执行文件和参数数组直接启动，不经过 Shell。自定义适配器必须且只能包含一个 `{{prompt}}` 参数占位符，不能注入环境变量或 Shell 片段。详细配置见 [docs/configuration.md](docs/configuration.md)。
 
@@ -227,3 +227,26 @@ sh ./scripts/install.sh ./devcycle
 ## AI Team development preview
 
 Open `/team.html` in a locally built DevCycle. Simple and Expert share the durable team runtime, capability/model routing, memory, risk and evidence. First configure an explicit model-aware adapter. Read [runtime](docs/AI_TEAM_RUNTIME.md), [routing](docs/MODEL_ROUTING.md), [memory](docs/PROJECT_MEMORY.md), and [risk](docs/RISK_MODEL.md). This is a development preview, not v2 GA.
+
+
+## C2 / RC.2：首次使用、Provider 与 Delivery
+
+打开 `/suite.html` 使用统一工作入口，或 `/team.html` 进入 AI Team 引导。先连接并测试正式 Provider，选择或从 Web 创建空 Git 项目，再选择验收检查与执行范围；常规初始化无需编写 Capability Registry JSON。尚未配置模型时仍可查看安装状态、项目、已有记录和各产品本地工具。外部模块“有入口”不代表“健康”，空数据不使用示例指标填充。
+
+从 Web 创建新项目时沿用已有 Git 提交身份。缺少的 `user.name` / `user.email` 仅在该新项目的本地配置中补为 `DevCycle local` / `devcycle@example.invalid`，供初始提交和后续 Worktree 中的 Controller 提交使用；用户全局配置保持原状。
+
+Provider 中心复用已有 HTTP Service、OS keyring / env SecretStore、Agent Adapter、Team 路由和 sidecar。API 型号通过用户显式触发的 `/models` 发现后选择，或填入已验证的正式型号；不会写死猜测型号。Codex 引导适配器使用用户正式授权的 CLI 与所选型号。Kimi 未授权时显示 Configuration Required / BLOCKED；聊天订阅不等于 Coding API 权限。
+
+连接测试只验证请求期间保持不变的配置；更新、撤销连接或更改角色时，晚到的测试响应不能恢复 Ready。生成、型号发现、连接测试与 API Coding 都先原子捕获地址、型号及对应凭据，再释放配置锁发起网络请求，避免更新连接时把新凭据发给旧地址。捕获的凭据只留在内存，不进入响应或审计。Codex 的连接测试在临时非 Git 目录运行，明确使用官方 CLI 的 read-only、ephemeral 与 skip-git-repo-check 参数。Simple Mission 默认最多执行 8 次、修复 1 次。
+
+结构化 API 响应必须有明确的正常结束状态；截断、过滤、拒绝、工具调用、缺少结束状态或多候选响应均失败，已有用量仍入账且不会自动重试。官方 HTTPS `api.deepseek.com:443` 使用明确的非思考模式，避免默认思考占用有限输出；其他兼容服务不附加该参数。协议依据：[DeepSeek Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/) 与 [Create Chat Completion](https://api-docs.deepseek.com/api/create-chat-completion/)。
+
+所有 HTTP 生成、连接测试和模型发现都须有明确请求预算。金额以整数百万分之一 CNY 保存，预先按完整请求输入上界与 `max_tokens` 预留费用，次数和金额任一达到上限即阻断。模型发现计入请求次数但无生成 token 费用；正常生成按实际有效 usage 和配置单价结算。缺失、负值、超界或不一致 usage 会保留整笔预留并阻断后续；显式接受完整预留费用后，仍须重新测试连接且只能使用剩余预算。费用是按配置最高适用单价估计，不是服务商账单。预算保存、连接撤销及同 ID 重建均不清零计数；同一数据库的第二个 Team 执行进程被现有独占锁拒绝。请为独立安装使用独立数据目录，不将本地可信单用户边界宣称为多租户隔离。
+
+API Coding 使用严格单对象 JSON 的受控文本编辑协议：最多 100 个已跟踪非敏感文件、上下文编码字节上限、路径 / symlink / `.git` / secret 检查、角色路径权限和整批预先校验。它不提供 shell、搜索、抓取或部署工具；现有 Controller 在本地运行用户选择的真实机器检查。会话、worktree、审计、完整响应哈希、严格 Review、修复循环和 source-bound evidence 均沿用原 Runtime。需要复杂本地工具时使用正式 CLI，而不是假装 API 已拥有未实现工具。
+
+Delivery 页面展示实际修改、已完成 / 未完成任务、真实检查、所有 Review 尝试、风险、真实 Diff 与可下载证据包。没有经过验证的应用预览或启动指令时明确显示不可用，不猜测部署命令；Candidate ready 和 Guard GO 都不等于生产发布授权。共享浅色 / 深色 / 跟随系统主题与移动导航覆盖 Suite、Team、Provider、Delivery 及原工作台子页面。
+
+诊断接口 `GET /api/team/diagnostics/runtime` 仅返回真实数值：goroutines、heapAllocBytes、heapSysBytes、heapInuseBytes、systemBytes、gcCount、uptimeSeconds，并保留 Host / Origin 限制；没有 pprof、堆栈、环境或配置。
+
+本版本仍为 RC。真实 Kimi、三模型协作、24 小时观察和 GA 资格须由独立机器证据确认；界面或本地 fixture 通过不能替代真实 Provider 验收。

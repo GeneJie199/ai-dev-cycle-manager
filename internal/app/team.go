@@ -24,6 +24,10 @@ func (a *App) TeamStore() (*team.Store, error) {
 }
 
 func (a *App) CreateMission(ctx context.Context, m team.Mission) (team.Mission, error) {
+	return a.createMission(ctx, m, nil)
+}
+
+func (a *App) createMission(ctx context.Context, m team.Mission, bindings []RegisteredModel) (team.Mission, error) {
 	if _, err := a.TeamStore(); err != nil {
 		return m, err
 	}
@@ -132,6 +136,14 @@ func (a *App) CreateMission(ctx context.Context, m team.Mission) (team.Mission, 
 			return m, err
 		}
 	}
+	// Persist guided authorization before the Mission becomes visible. If this
+	// write fails there is no executable Mission; a later Mission-write failure
+	// can leave only an inert orphan binding, never an unbound guided Mission.
+	if bindings != nil {
+		if err = a.Team.SaveProductSetting(ctx, "mission-routing:"+m.ID, bindings); err != nil {
+			return m, err
+		}
+	}
 	err = a.Team.Save(ctx, &m)
 	return m, err
 }
@@ -228,7 +240,11 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 	if t.ContextSize < len(prompt) {
 		t.ContextSize = len(prompt)
 	}
-	choices, routeErr := team.Route(m, *t, available)
+	routeMission, routeErr := a.routedMission(ctx, m, t.Role)
+	choices := []team.Model{}
+	if routeErr == nil {
+		choices, routeErr = team.Route(routeMission, *t, available)
+	}
 	if routeErr == nil && t.Role == "review" {
 		authors := map[string]bool{}
 		for _, run := range m.Executions {
@@ -325,7 +341,8 @@ func (a *App) AdvanceMission(ctx context.Context, id string) (team.Mission, erro
 		}
 		break
 	}
-	session, err := a.startAgentSessionModel(ctx, t.TaskID, chosen.Adapter, chosen.ID, prompt)
+	dispatchCtx := context.WithValue(context.WithValue(context.WithValue(ctx, apiRoleKey{}, t.Role), apiContextKey{}, chosen.ContextLimit), missionDispatchKey{}, m.ID)
+	session, err := a.startAgentSessionModel(dispatchCtx, t.TaskID, chosen.Adapter, chosen.ID, prompt)
 	if err != nil {
 		return a.finishMissionTask(ctx, m, index, ei, err)
 	}

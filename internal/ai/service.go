@@ -63,6 +63,7 @@ type Service struct {
 	MaxInputChars  int
 	MaxOutputBytes int
 	Configs        ProviderConfigStore
+	Billing        BillingStore
 	Secrets        SecretStore
 	mu             sync.Mutex
 	slots          chan struct{}
@@ -105,6 +106,8 @@ func (s *Service) AllProviders(ctx context.Context) ([]ProviderStatus, error) {
 			status.SecretSource = "environment"
 		} else if strings.HasPrefix(config.SecretRef, "keyring:") {
 			status.SecretSource = "keyring"
+		} else if strings.HasPrefix(config.SecretRef, "private:") {
+			status.SecretSource = "private_file"
 		}
 		if !config.Enabled {
 			status.Reason = "provider is disabled"
@@ -121,7 +124,7 @@ func (s *Service) AllProviders(ctx context.Context) ([]ProviderStatus, error) {
 			if secret, secretErr := s.Secrets.Get(ctx, config.SecretRef); secretErr == nil && secret != "" {
 				status.SecretConfigured = true
 			} else if secretErr != nil {
-				status.Reason = secretErr.Error()
+				status.Reason = "credential unavailable from the configured secure storage"
 			}
 		}
 		status.Available = status.SecretConfigured
@@ -161,24 +164,23 @@ func (s *Service) GenerateJSON(ctx context.Context, provider, purpose, prompt st
 	if inputChars > maxInput {
 		return GenerationMeta{}, fmt.Errorf("AI %s input exceeds %d characters", purpose, maxInput)
 	}
-	if s.Configs != nil {
-		config, configErr := s.Configs.GetAIProvider(ctx, provider)
-		if configErr == nil {
-			started := time.Now()
-			output, err := s.generateHTTP(ctx, config, prompt, maxOutput)
-			if err != nil {
-				return GenerationMeta{}, err
-			}
-			if err = ExtractJSONObject(output, result); err != nil {
-				return GenerationMeta{}, fmt.Errorf("parse %s output: %w", provider, err)
-			}
-			return GenerationMeta{Provider: provider, GeneratedAt: time.Now().UTC().Format(time.RFC3339), RedactionCount: redactions, InputChars: inputChars, OutputBytes: len(output), DurationMilliseconds: time.Since(started).Milliseconds(), CostStatus: "not_reported_by_provider"}, nil
+	snapshot, configErr := s.providerSnapshot(ctx, provider)
+	if configErr == nil {
+		started := time.Now()
+		output, err := s.generateHTTP(ctx, snapshot, prompt, maxOutput)
+		if err != nil {
+			return GenerationMeta{}, err
 		}
-		if !errors.Is(configErr, sql.ErrNoRows) {
-			return GenerationMeta{}, fmt.Errorf("load AI provider: %w", configErr)
+		if err = decodeResponse(ctx, output, result); err != nil {
+			return GenerationMeta{}, fmt.Errorf("parse %s output: %w", provider, err)
 		}
+		return GenerationMeta{Provider: provider, GeneratedAt: time.Now().UTC().Format(time.RFC3339), RedactionCount: redactions, InputChars: inputChars, OutputBytes: len(output), DurationMilliseconds: time.Since(started).Milliseconds(), CostStatus: "usage_accounted_at_configured_cny_rates"}, nil
 	}
-	binary, args, err := providerCommand(provider, prompt)
+	if !errors.Is(configErr, sql.ErrNoRows) {
+		return GenerationMeta{}, fmt.Errorf("load AI provider: %w", configErr)
+	}
+	model, _ := ctx.Value(cliModelKey{}).(string)
+	binary, args, err := providerCommand(provider, prompt, model)
 	if err != nil {
 		return GenerationMeta{}, err
 	}
@@ -209,7 +211,7 @@ func (s *Service) GenerateJSON(ctx context.Context, provider, purpose, prompt st
 	if output.exceeded {
 		return GenerationMeta{}, fmt.Errorf("%s output exceeded %d bytes", provider, maxOutput)
 	}
-	if err := ExtractJSONObject(output.String(), result); err != nil {
+	if err := decodeResponse(ctx, output.String(), result); err != nil {
 		return GenerationMeta{}, fmt.Errorf("parse %s output: %w", provider, err)
 	}
 	return GenerationMeta{Provider: provider, GeneratedAt: time.Now().UTC().Format(time.RFC3339), RedactionCount: redactions, InputChars: inputChars, OutputBytes: output.Len(), DurationMilliseconds: time.Since(started).Milliseconds(), CostStatus: "not_reported_by_cli"}, nil
@@ -237,14 +239,22 @@ func (s *Service) release() {
 	<-slots
 }
 
-func providerCommand(provider, prompt string) (string, []string, error) {
+func providerCommand(provider, prompt, model string) (string, []string, error) {
+	modelArgs := []string{}
+	if model != "" {
+		modelArgs = []string{"--model", model}
+	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "kimi":
-		return "kimi", []string{"-p", prompt}, nil
+		return "kimi", append(modelArgs, "-p", prompt), nil
 	case "codex":
-		return "codex", []string{"exec", "--sandbox", "read-only", prompt}, nil
+		// Connection/planning requests use a disposable non-Git directory. Keep
+		// authentication CLI-managed and explicitly allow only this read-only run.
+		args := []string{"exec", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "--color", "never"}
+		args = append(args, modelArgs...)
+		return "codex", append(args, "--", prompt), nil
 	case "claude":
-		return "claude", []string{"-p", prompt}, nil
+		return "claude", append(modelArgs, "-p", prompt), nil
 	default:
 		return "", nil, errors.New("provider must be kimi, codex, or claude")
 	}
@@ -399,4 +409,10 @@ func truncate(value string, maximum int) string {
 		return value
 	}
 	return value[:maximum] + " [truncated]"
+}
+
+type cliModelKey struct{}
+
+func WithCLIModel(ctx context.Context, model string) context.Context {
+	return context.WithValue(ctx, cliModelKey{}, model)
 }

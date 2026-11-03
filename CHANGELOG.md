@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.0 (2026-11-02) — RC.2
+
+- Guided first-run project and Provider setup without a JSON editor; explicit connection states and authorized role routing.
+- Official API structured-edit adapter reuses Mission sessions, worktrees, checks, strict review and source-bound evidence.
+- Persistent CNY/call/token reservations, unknown-usage blocking and explicit Linux owner-only private credential storage.
+- Delivery view and downloadable evidence retain incomplete work, historical failures and release limitations.
+- Numeric-only runtime diagnostics, with the same Host/Origin protection. This remains a trusted single-user RC; GA and 24-hour stability are not asserted.
+
 ## 2.0.0 (2026-10-31) — RC.1
 
 - Community RC: AI Team integration, AGPL-3.0-only source, preserved historical Apache rights.
