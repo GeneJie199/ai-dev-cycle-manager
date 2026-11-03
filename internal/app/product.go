@@ -398,10 +398,27 @@ func (a *App) CreateOnboardingProject(ctx context.Context, path string) (models.
 	if _, err = missionGit(ctx, path, "init"); err != nil {
 		return models.Repository{}, err
 	}
+	// Worktrees share this new repository's configuration. Persist only missing
+	// identity fields here so later controller commits work on a fresh machine.
+	// Existing effective user identity and all global configuration stay intact.
+	for _, identity := range [][2]string{{"user.name", "DevCycle local"}, {"user.email", "devcycle@example.invalid"}} {
+		value, configErr := missionGit(ctx, path, "config", "--get", identity[0])
+		if configErr != nil {
+			var exitErr *exec.ExitError
+			if !errors.As(configErr, &exitErr) || exitErr.ExitCode() != 1 {
+				return models.Repository{}, configErr
+			}
+		}
+		if strings.TrimSpace(value) == "" {
+			if _, err = missionGit(ctx, path, "config", "--local", identity[0], identity[1]); err != nil {
+				return models.Repository{}, err
+			}
+		}
+	}
 	if err = os.WriteFile(filepath.Join(path, "README.md"), []byte("# New DevCycle project\n"), 0600); err != nil {
 		return models.Repository{}, err
 	}
-	for _, args := range [][]string{{"add", "README.md"}, {"-c", "user.name=DevCycle local", "-c", "user.email=devcycle@example.invalid", "commit", "-m", "Initialize local project"}} {
+	for _, args := range [][]string{{"add", "README.md"}, {"commit", "-m", "Initialize local project"}} {
 		if _, err = missionGit(ctx, path, args...); err != nil {
 			return models.Repository{}, err
 		}

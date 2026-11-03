@@ -233,6 +233,8 @@ Open `/team.html` in a locally built DevCycle. Simple and Expert share the durab
 
 打开 `/suite.html` 使用统一工作入口，或 `/team.html` 进入 AI Team 引导。先连接并测试正式 Provider，选择或从 Web 创建空 Git 项目，再选择验收检查与执行范围；常规初始化无需编写 Capability Registry JSON。尚未配置模型时仍可查看安装状态、项目、已有记录和各产品本地工具。外部模块“有入口”不代表“健康”，空数据不使用示例指标填充。
 
+从 Web 创建新项目时沿用已有 Git 提交身份。缺少的 `user.name` / `user.email` 仅在该新项目的本地配置中补为 `DevCycle local` / `devcycle@example.invalid`，供初始提交和后续 Worktree 中的 Controller 提交使用；用户全局配置保持原状。
+
 Provider 中心复用已有 HTTP Service、OS keyring / env SecretStore、Agent Adapter、Team 路由和 sidecar。API 型号通过用户显式触发的 `/models` 发现后选择，或填入已验证的正式型号；不会写死猜测型号。Codex 引导适配器使用用户正式授权的 CLI 与所选型号。Kimi 未授权时显示 Configuration Required / BLOCKED；聊天订阅不等于 Coding API 权限。
 
 连接测试只验证请求期间保持不变的配置；更新、撤销连接或更改角色时，晚到的测试响应不能恢复 Ready。生成、型号发现、连接测试与 API Coding 都先原子捕获地址、型号及对应凭据，再释放配置锁发起网络请求，避免更新连接时把新凭据发给旧地址。捕获的凭据只留在内存，不进入响应或审计。Codex 的连接测试在临时非 Git 目录运行，明确使用官方 CLI 的 read-only、ephemeral 与 skip-git-repo-check 参数。Simple Mission 默认最多执行 8 次、修复 1 次。
