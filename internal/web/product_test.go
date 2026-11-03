@@ -212,7 +212,7 @@ func TestUnifiedShellAndSuiteStaticResourcesRealHTTP(t *testing.T) {
 			}
 		}
 	}
-	for path, want := range map[string]string{"/suite-design.css": "db787b3cad9a0d61196416d28543191c24c8236471051c3cbacc3057a2b09781", "/suite-ui.js": "759c0361723dca54b7ac1234c698d4d19b7f70b1602fed906a88a57afd431633"} {
+	for path, want := range map[string]string{"/suite-design.css": "ef045be7eae0f26b5c2d897bfd0ad23a170e4d46100698daec57efb6a935d961", "/suite-ui.js": "759c0361723dca54b7ac1234c698d4d19b7f70b1602fed906a88a57afd431633"} {
 		response, e := http.Get(s.URL + path)
 		if e != nil {
 			t.Fatal(e)
