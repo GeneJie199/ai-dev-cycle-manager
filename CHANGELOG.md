@@ -6,6 +6,9 @@
 - Official API structured-edit adapter reuses Mission sessions, worktrees, checks, strict review and source-bound evidence.
 - Persistent CNY/call/token reservations, unknown-usage blocking and explicit Linux owner-only private credential storage.
 - Delivery view and downloadable evidence retain incomplete work, historical failures and release limitations.
+- Shared light/dark/system styling and responsive navigation cover Suite, Team, Provider, Delivery and workbench views; decorative hero effects stay within the page on mobile.
+- Fresh Web-created projects retain an effective repository-local Git identity for subsequent controller/worktree commits while preserving existing user identity and global configuration.
+- Release documentation points to the actual Suite installation guide and distinguishes aggregate license inventories from the generated DevCycle module SBOM.
 - Numeric-only runtime diagnostics, with the same Host/Origin protection. This remains a trusted single-user RC; GA and 24-hour stability are not asserted.
 
 ## 2.0.0 (2026-10-31) — RC.1
