@@ -1,4 +1,8 @@
-# AI Engineering Team v2.0.0-rc.2 Community
+# AI Engineering Team v2.0.0-rc.3 Community
+
+Delivery now opens for pending and R4-blocked Missions with no execution
+records. Users can review the incomplete work and risks and download the
+evidence ZIP. The release status still reflects the Mission's actual readiness.
 
 Open `/suite.html` for the work entry, `/team.html` for guided setup and AI Team,
 or `/` for the full DevCycle workbench. Suite, Team, Provider, Delivery and the
