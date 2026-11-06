@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.0 (2026-11-06) — RC.3
+
+- Keep the Delivery view and evidence download available for pending and R4-blocked Missions that have no execution records. The view shows their incomplete work and risks.
+
 ## 2.0.0 (2026-11-02) — RC.2
 
 - Guided first-run project and Provider setup without a JSON editor; explicit connection states and authorized role routing.
